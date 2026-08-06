@@ -1,0 +1,26 @@
+# Reference clone — read-only, not part of this project (ADR-0005/payroll study)
+frappe_docker/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / Next
+node_modules/
+.next/
+
+# Local blob storage (dev resumes)
+_storage/
+
+# Env & secrets
+.env
+*.local
+
+# OS
+.DS_Store
+Thumbs.db

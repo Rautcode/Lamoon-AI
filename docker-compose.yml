@@ -1,0 +1,42 @@
+# Lamoon HR — local stack. Postgres + Redis + API + one Celery worker.
+# Web (Next.js) is scaffolded separately (apps/web) — add here when it exists.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: lamoon
+      POSTGRES_PASSWORD: lamoon
+      POSTGRES_DB: lamoon
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lamoon"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgresql+psycopg://lamoon:lamoon@db:5432/lamoon
+      REDIS_URL: redis://redis:6379/0
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_started}
+
+  worker:
+    build: ./apps/api
+    command: celery -A app.workers.celery_app.celery_app worker -Q high,normal,background -l info
+    environment:
+      DATABASE_URL: postgresql+psycopg://lamoon:lamoon@db:5432/lamoon
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis: {condition: service_started}
+
+volumes:
+  pgdata:
