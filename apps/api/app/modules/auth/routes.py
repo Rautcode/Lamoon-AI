@@ -1,17 +1,33 @@
-"""Auth endpoints. Login/bootstrap run before a tenant exists, so they use
-open_session (no pre-set GUC) and manage the tenant scope in the service.
+"""Auth endpoints. Login/bootstrap/refresh/OAuth all run before a tenant is
+established via the JWT, so they use open_session (no pre-set GUC) and manage
+tenant scope themselves (service.py / oauth.py).
 """
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
 
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
+
+from app.core.auth.oauth import OAuthClient, get_oauth_client, is_configured, new_state
 from app.core.auth.permissions import permissions_for
 from app.core.auth.provider import Principal, get_identity_provider
 from app.core.config import get_settings
 from app.core.db import open_session
 from app.core.rbac import current_user
+from app.core.security import decode_token
 from app.modules.auth import service
-from app.modules.auth.schemas import BootstrapIn, LoginIn, MeOut, TokenOut
+from app.modules.auth.models import User
+from app.modules.auth.schemas import BootstrapIn, LoginIn, MeOut, RefreshIn, TokenOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _issue(user: User) -> TokenOut:
+    principal = Principal(
+        user_id=str(user.id), company_id=str(user.company_id),
+        role=user.role, permissions=permissions_for(user.role),
+    )
+    tokens = get_identity_provider().issue_session(principal)
+    return TokenOut(access_token=tokens.access, refresh_token=tokens.refresh)
 
 
 @router.post("/bootstrap", status_code=201)
@@ -34,12 +50,34 @@ def login(body: LoginIn) -> TokenOut:
         user = service.authenticate(db, body.company, body.email, body.password)
         if user is None:
             raise HTTPException(401, "invalid credentials")
-        principal = Principal(
-            user_id=str(user.id), company_id=str(user.company_id),
-            role=user.role, permissions=permissions_for(user.role),
-        )
-    tokens = get_identity_provider().issue_session(principal)
-    return TokenOut(access_token=tokens.access, refresh_token=tokens.refresh)
+        return _issue(user)
+
+
+@router.post("/refresh", response_model=TokenOut)
+def refresh(body: RefreshIn) -> TokenOut:
+    """Re-issues a fresh access+refresh pair from a valid refresh token. Role
+    and active-status are re-read from the DB (not trusted from stale claims),
+    so a demoted/deactivated user is denied immediately rather than at their
+    old token's expiry.
+
+    ponytail: no server-side revocation list — a leaked refresh token stays
+    valid until its own expiry (refresh_ttl_days) even after "rotation" here.
+    A Redis-backed jti blocklist + a real /auth/logout is the next hardening
+    step, not built now to keep this to "wire up refresh".
+    """
+    try:
+        claims = decode_token(body.refresh_token)
+    except Exception:
+        raise HTTPException(401, "invalid or expired refresh token") from None
+    if claims.get("typ") != "refresh":
+        raise HTTPException(401, "not a refresh token")
+
+    with open_session() as db:
+        service.set_tenant(db, claims["cid"])
+        user = db.get(User, uuid.UUID(claims["sub"]))
+        if user is None or not user.is_active or user.deleted_at is not None:
+            raise HTTPException(401, "account no longer active")
+        return _issue(user)
 
 
 @router.get("/me", response_model=MeOut)
@@ -48,3 +86,50 @@ def me(principal: Principal = Depends(current_user)) -> MeOut:
         user_id=principal.user_id, company_id=principal.company_id,
         role=principal.role, permissions=sorted(principal.permissions),
     )
+
+
+def _redirect_uri(provider: str) -> str:
+    # Must be byte-identical between /start and /callback — both build it here.
+    return f"{get_settings().api_base_url}/api/v1/auth/oauth/{provider}/callback"
+
+
+@router.get("/oauth/{provider}/start")
+def oauth_start(provider: str, company: str = Query(..., description="company subdomain")):
+    if provider not in ("google", "microsoft"):
+        raise HTTPException(404, "unknown provider")
+    if not is_configured(provider):
+        raise HTTPException(503, f"{provider} OAuth is not configured")
+    client = get_oauth_client(provider)
+    state = new_state(provider, company)
+    return RedirectResponse(client.authorize_url(_redirect_uri(provider), state))
+
+
+def oauth_client_dependency(provider: str) -> OAuthClient:
+    """A parameterized dependency: FastAPI resolves `provider` from the route's
+    own path param. Tests override THIS (app.dependency_overrides) to inject a
+    fake client — /start doesn't need the override since authorize_url() is
+    pure string-building; only /callback's exchange() touches the network."""
+    if provider not in ("google", "microsoft"):
+        raise HTTPException(404, "unknown provider")
+    return get_oauth_client(provider)
+
+
+@router.get("/oauth/{provider}/callback", response_model=TokenOut)
+async def oauth_callback(
+    provider: str, code: str, state: str,
+    client: OAuthClient = Depends(oauth_client_dependency),
+) -> TokenOut:
+    try:
+        state_claims = decode_token(state)
+    except Exception:
+        raise HTTPException(400, "invalid or expired state") from None
+    if state_claims.get("typ") != "oauth_state" or state_claims.get("provider") != provider:
+        raise HTTPException(400, "invalid state")
+
+    profile = await client.exchange(code, _redirect_uri(provider))
+
+    with open_session() as db:
+        user = service.authenticate_oauth(db, state_claims["company"], profile.email, provider)
+        if user is None:
+            raise HTTPException(403, "no account found for this email — ask an admin to add you")
+        return _issue(user)

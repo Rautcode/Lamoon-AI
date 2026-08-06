@@ -22,6 +22,18 @@ class Settings(BaseSettings):
     jwt_alg: str = "HS256"
     access_ttl_min: int = 30
     refresh_ttl_days: int = 14
+    oauth_state_ttl_min: int = 10
+
+    # OAuth (Google/Microsoft). Empty client_id → that provider's /start 503s.
+    # Endpoints (authorize/token/userinfo URLs) are public and hardcoded in
+    # core/auth/oauth.py; only these credentials are secret/configurable.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    microsoft_client_id: str = ""
+    microsoft_client_secret: str = ""
+    microsoft_tenant: str = "common"
+    # Must exactly match the redirect URI registered with each provider.
+    oauth_redirect_base: str = "http://localhost:8000"
 
     # AI
     gemini_api_key: str = ""
