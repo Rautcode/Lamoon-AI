@@ -1,0 +1,10 @@
+Subject: You're shortlisted — {job_title} at {company_name}
+
+Hi {candidate_name},
+
+Good news — you've been shortlisted for {job_title} at {company_name}.
+Please book an interview slot here: {scheduling_link}
+
+Looking forward to speaking with you.
+
+— {company_name} Hiring Team

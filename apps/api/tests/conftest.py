@@ -15,6 +15,12 @@ COMPANY = {
 }
 CREDS = {"company": "acme", "email": "admin@acme.test", "password": "pw123456"}
 
+COMPANY_B = {
+    "company_name": "Globex", "subdomain": "globex",
+    "email": "admin@globex.test", "password": "pw123456",
+}
+CREDS_B = {"company": "globex", "email": "admin@globex.test", "password": "pw123456"}
+
 
 class FakeProvider:
     async def analyze(self, *, prompt_key, prompt_ver, inputs, output_schema, cache_key=None):
@@ -39,16 +45,27 @@ def client():
     app.dependency_overrides.clear()
 
 
+def _login(client, company: dict, creds: dict) -> dict:
+    client.post("/api/v1/auth/bootstrap", json=company)
+    r = client.post("/api/v1/auth/login", json=creds)
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
 @pytest.fixture
 def headers(client):
     """Real Bearer token via bootstrap + login (idempotent)."""
-    client.post("/api/v1/auth/bootstrap", json=COMPANY)
-    r = client.post("/api/v1/auth/login", json=CREDS)
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+    return _login(client, COMPANY, CREDS)
+
+
+@pytest.fixture
+def headers_b(client):
+    """A second, independent tenant — for cross-tenant isolation tests."""
+    return _login(client, COMPANY_B, CREDS_B)
 
 
 def make_pdf(text: str) -> bytes:
     doc = fitz.open()
     page = doc.new_page()
-    page.insert_text((72, 72), text)
-    return doc.tobytes()
+    if text:
+        page.insert_text((72, 72), text)
+    return doc.tobytes()  # empty text → a genuinely blank page, no extractable text

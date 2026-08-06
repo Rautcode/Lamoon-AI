@@ -1,15 +1,22 @@
 """Resume screening pipeline — the flagship flow.
 
-    extracted_text → [cache?] → AIProvider.analyze → job_match → score → tier → persist
+    extracted_text → [cache?] → AIProvider.analyze → job_match → score → tier
+        → persist → notify (spec's automatic actions)
 
 The cost lever (ADR-0005): the AI screening is resume-only, so it's cached by
 (resume_sha256 + recipe_hash). Same resume + same recipe = zero API calls; only
 the cheap job-match/score/tier is recomputed per application.
 
+Automatic actions per tier (spec): A/B → HR + candidate notified immediately,
+status="shortlisted". C/D → status="pending_reject"; the actual rejection email
+is sent by the scheduled auto-reject job after a 10-day grace window (see
+tasks.py), not here — that's Workflow 2, not the screening workflow.
+
 ponytail: runs inline (awaited) for the V1 slice. Production enqueues this on
 the Celery `high` queue from /apply — the thin task wrapper is a later add.
 """
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -21,12 +28,16 @@ from app.core.ai.provider import (
     AIProvider,
 )
 from app.core.config import get_settings
+from app.core.notify.base import Notifier
 from app.modules.ats import scoring
 from app.modules.ats.models import AIAnalysis, Application, Candidate, JobOpening
+from app.modules.ats.notify_helpers import hr_recipient
 from app.modules.ats.schemas import Screening
 from app.modules.audit import service as audit
+from app.modules.auth.models import Company
 
 PROMPT_KEY, PROMPT_VER = "resume_screen", "v1"
+SHORTLIST_TIERS = ("A", "B")
 
 
 def _recipe_hash() -> str:
@@ -36,7 +47,7 @@ def _recipe_hash() -> str:
 
 
 async def screen_application(
-    db: Session, application_id: uuid.UUID, provider: AIProvider
+    db: Session, application_id: uuid.UUID, provider: AIProvider, notifier: Notifier
 ) -> Application:
     app = db.get(Application, application_id)
     if app is None:
@@ -102,9 +113,13 @@ async def screen_application(
             prompt_version=PROMPT_VER,
         )
     )
-    app.status = "scored"
     app.tier = tier
     app.recommended_action = scoring.recommended_action(tier)
+    app.screened_at = datetime.now(UTC)
+    app.status = "shortlisted" if tier in SHORTLIST_TIERS else "pending_reject"
+
+    await _notify_screened(db, app, cand, job, tier, final, notifier)
+
     audit.record(
         db,
         company_id=app.company_id,
@@ -116,6 +131,40 @@ async def screen_application(
     )
     db.flush()
     return app
+
+
+async def _notify_screened(
+    db: Session, app: Application, cand: Candidate, job: JobOpening | None,
+    tier: str, final: float, notifier: Notifier,
+) -> None:
+    """Spec's automatic actions: A/B → candidate scheduling link + HR heads-up.
+    C/D → no email yet; the scheduled job rejects after the grace window."""
+    company = db.get(Company, app.company_id)
+    company_name = company.name if company else "the company"
+    job_title = job.title if job else "the role"
+    hr = hr_recipient(db, app.company_id)
+
+    if tier in SHORTLIST_TIERS:
+        # ponytail: placeholder link — real Calendar-API scheduling is a later module.
+        link = f"https://app.lamoon.hr/interviews/schedule/{app.id}"
+        if cand.email:
+            await notifier.send(
+                to=cand.email, template="interview_invite",
+                ctx={
+                    "candidate_name": cand.full_name or "there",
+                    "job_title": job_title, "company_name": company_name, "scheduling_link": link,
+                },
+            )
+        if hr:
+            await notifier.send(
+                to=hr, template="hr_alert",
+                ctx={
+                    "subject": (
+                        f"Tier {tier} candidate — {job_title}: {cand.full_name or cand.email}"
+                    ),
+                    "body": f"Application {app.id} scored {final}/10 (Tier {tier}). Review: {link}",
+                },
+            )
 
 
 def _job_dict(job: JobOpening | None) -> dict:

@@ -1,8 +1,9 @@
 """ATS tables (ARCH §3). All inherit TenantBase → uuid PK, company_id, audit cols.
 RLS policies are added in the migration, not here."""
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,6 +46,10 @@ class Application(TenantBase):
     status: Mapped[str] = mapped_column(String(20), default="received")
     tier: Mapped[str | None] = mapped_column(String(1), nullable=True)
     recommended_action: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # screened_at anchors the 10-day auto-reject window (Tier C/D); rejected_at
+    # records when the scheduled job actually rejected the application.
+    screened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AIAnalysis(TenantBase):

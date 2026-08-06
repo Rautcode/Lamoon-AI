@@ -4,11 +4,16 @@ services:
   db:
     image: postgres:17-alpine
     environment:
+      # lamoon is the cluster bootstrap superuser (image default behavior) —
+      # used ONLY to create the `app` role below. The app itself never
+      # connects as lamoon: superusers implicitly BYPASSRLS (ADR-0002).
       POSTGRES_USER: lamoon
       POSTGRES_PASSWORD: lamoon
       POSTGRES_DB: lamoon
     ports: ["5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lamoon"]
       interval: 5s
@@ -22,7 +27,7 @@ services:
   api:
     build: ./apps/api
     environment:
-      DATABASE_URL: postgresql+psycopg://lamoon:lamoon@db:5432/lamoon
+      DATABASE_URL: postgresql+psycopg://app:app@db:5432/lamoon
       REDIS_URL: redis://redis:6379/0
     ports: ["8000:8000"]
     depends_on:
@@ -33,7 +38,7 @@ services:
     build: ./apps/api
     command: celery -A app.workers.celery_app.celery_app worker -Q high,normal,background -l info
     environment:
-      DATABASE_URL: postgresql+psycopg://lamoon:lamoon@db:5432/lamoon
+      DATABASE_URL: postgresql+psycopg://app:app@db:5432/lamoon
       REDIS_URL: redis://redis:6379/0
     depends_on:
       redis: {condition: service_started}

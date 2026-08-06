@@ -1,0 +1,10 @@
+Subject: Application received — {job_title}
+
+Hi {candidate_name},
+
+Thanks for applying to {job_title} at {company_name}. We've received your
+resume and our team will review it shortly.
+
+We'll be in touch with next steps.
+
+— {company_name} Hiring Team

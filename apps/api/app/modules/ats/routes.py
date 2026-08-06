@@ -8,12 +8,15 @@ from sqlalchemy.orm import Session
 
 from app.core.ai.provider import AIProvider, get_ai_provider
 from app.core.db import get_db
+from app.core.notify.base import Notifier, get_notifier
 from app.core.storage.base import checksum, get_blob_store
 from app.core.tenant import resolve_tenant
 from app.modules.ats import extract, pipeline
 from app.modules.ats.models import Application, Candidate, JobOpening
+from app.modules.ats.notify_helpers import hr_recipient
 from app.modules.ats.schemas import ApplicationOut, JobIn
 from app.modules.audit import service as audit
+from app.modules.auth.models import Company
 
 # ponytail: add dependencies=[Depends(require_module("ats"))] once entitlements are seeded.
 router = APIRouter(prefix="/ats", tags=["ats"])
@@ -41,6 +44,7 @@ async def apply(
     full_name: str | None = Form(None),
     db: Session = Depends(get_db),
     cid: str = Depends(resolve_tenant),
+    notifier: Notifier = Depends(get_notifier),
 ):
     """Webhook front door. Idempotent by resume SHA-256: same resume dedups to
     one candidate instead of re-uploading (the cost/dedup lever)."""
@@ -49,6 +53,7 @@ async def apply(
     company_id = uuid.UUID(cid)
 
     candidate = db.scalar(select(Candidate).where(Candidate.resume_sha256 == sha))
+    is_new_candidate = candidate is None
     if candidate is None:
         blob = get_blob_store()
         key = f"{cid}/{sha}.pdf"
@@ -66,6 +71,7 @@ async def apply(
         db.add(candidate)
         db.flush()
 
+    job = db.get(JobOpening, job_id) if job_id else None
     app = Application(
         company_id=company_id,
         candidate_id=candidate.id,
@@ -79,6 +85,39 @@ async def apply(
         db, company_id=company_id, entity="application", entity_id=app.id,
         action="received", source="webhook",
     )
+
+    company = db.get(Company, company_id)
+    company_name = company.name if company else "the company"
+    job_title = job.title if job else "the role"
+
+    # Bad resume: extraction produced nothing → HR can't screen it. Alert HR,
+    # mark for manual review, skip the candidate email (nothing to confirm yet).
+    if is_new_candidate and not (candidate.extracted_text or "").strip():
+        app.status = "needs_review"
+        hr = hr_recipient(db, company_id)
+        if hr:
+            await notifier.send(
+                to=hr, template="hr_alert",
+                ctx={
+                    "subject": (
+                        f"Resume could not be processed — "
+                        f"{candidate.full_name or email or sha[:8]}"
+                    ),
+                    "body": (
+                        f"Application {app.id} for {job_title} has no extractable text.\n"
+                        f"Resume: {candidate.resume_url}\nCandidate email: {email or 'unknown'}"
+                    ),
+                },
+            )
+    elif email:
+        await notifier.send(
+            to=email, template="application_received",
+            ctx={
+                "candidate_name": full_name or "there",
+                "job_title": job_title, "company_name": company_name,
+            },
+        )
+
     # ponytail: production enqueues screen_application on the Celery `high` queue here.
     return {"application_id": app.id, "candidate_id": candidate.id, "status": app.status}
 
@@ -102,10 +141,11 @@ async def screen(
     application_id: uuid.UUID,
     db: Session = Depends(get_db),
     provider: AIProvider = Depends(get_ai_provider),
+    notifier: Notifier = Depends(get_notifier),
     cid: str = Depends(resolve_tenant),
 ):
     try:
-        app = await pipeline.screen_application(db, application_id, provider)
+        app = await pipeline.screen_application(db, application_id, provider, notifier)
     except ValueError:
         raise HTTPException(404, "not found") from None
     return app

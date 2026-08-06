@@ -1,0 +1,11 @@
+Subject: Update on your application — {job_title}
+
+Hi {candidate_name},
+
+Thank you for your interest in {job_title} at {company_name} and for taking
+the time to apply. After careful review, we've decided not to move forward
+with your application at this time.
+
+We appreciate your interest and encourage you to apply again in the future.
+
+— {company_name} Hiring Team

@@ -10,8 +10,10 @@ class Settings(BaseSettings):
     app_name: str = "Lamoon HR"
     environment: str = "dev"
 
-    # Infra
-    database_url: str = "postgresql+psycopg://lamoon:lamoon@localhost:5432/lamoon"
+    # Infra. `app` is a deliberately non-superuser role — see db/init/01-app-role.sql.
+    # Never point this at the `lamoon` bootstrap superuser: superusers implicitly
+    # BYPASSRLS, which silently defeats every tenant boundary (ADR-0002).
+    database_url: str = "postgresql+psycopg://app:app@localhost:5432/lamoon"
     redis_url: str = "redis://localhost:6379/0"
 
     # Auth
@@ -27,6 +29,13 @@ class Settings(BaseSettings):
 
     # Storage (dev). ponytail: local FS now; DriveBlobStore/S3 behind BlobStore later.
     storage_dir: str = "./_storage"
+
+    # Email. Empty smtp_host → log-only (dev). Set these to actually send.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "no-reply@lamoon.local"
 
 
 @lru_cache
