@@ -9,6 +9,7 @@ from app.core import context
 from app.core.config import get_settings
 from app.modules.ats.routes import router as ats_router
 from app.modules.auth.routes import router as auth_router
+from app.modules.hr_core.routes import router as hr_core_router
 from app.modules.system.routes import router as system_router
 
 
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
 
     app.include_router(system_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(hr_core_router, prefix="/api/v1")
     app.include_router(ats_router, prefix="/api/v1")
     # ponytail: further feature routers register here as each module ships (auth, hr_core, ...).
     return app
