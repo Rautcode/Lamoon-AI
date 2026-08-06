@@ -6,8 +6,13 @@ Redis/Celery, with a Next.js frontend. See [`ARCHITECTURE.md`](ARCHITECTURE.md),
 [`docs/adr/`](docs/adr/README.md) for the frozen design.
 
 ## Status
-Skeleton only — all cross-cutting **seams stubbed**, no feature code yet.
-Boots, serves `/api/v1/health`, and passes tests. V1 ATS flow is next.
+**V1 feature-complete**: multi-tenant auth (JWT + RBAC), employee directory,
+and the full AI ATS flow — resume intake → Gemini screening → ranking →
+email automation → self-service interview scheduling with reminders. All
+cross-cutting seams (`core/`) are in place; several are still stubs pending a
+real 2nd implementation (Drive, SMS/Slack, Meilisearch, Razorpay — see
+`ARCHITECTURE-2-PLATFORM.md`). 23 tests, `ruff`/`mypy` clean, CI on every
+push. No frontend yet.
 
 ## Run the stack
 ```bash
@@ -32,6 +37,22 @@ cd apps/api
 alembic revision -m "create <table>"    # hand-add RLS policy for tenant tables
 alembic upgrade head
 ```
+Local Postgres (via `docker compose up -d db`) auto-creates the non-superuser
+`app` role from `db/init/01-app-role.sql` on first start. **Never** point
+`DATABASE_URL` at the `lamoon` bootstrap user — it's a superuser, and
+superusers implicitly bypass Row-Level Security (ADR-0002).
+
+## CI/CD
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), on every push/PR:
+lint (`ruff`) → type check (`mypy`) → spin up real Postgres+Redis service
+containers, create the `app` role → run migrations → run the full test suite.
+On push to `main`/`master` after tests pass, a second job builds the API
+image and publishes it to GHCR (`ghcr.io/<owner>/<repo>`) — no secrets needed
+beyond the built-in `GITHUB_TOKEN`. **Deploying that image to a live
+server/cloud is a separate, later step** — it needs a real target and
+credentials this repo doesn't have yet.
+
+CI only runs once this repo has a GitHub remote and is pushed there.
 
 ## Frontend
 `apps/web` is a placeholder — scaffold with `create-next-app` (see
@@ -40,8 +61,9 @@ alembic upgrade head
 ## Layout
 ```
 apps/api/app/core/      # seams: auth, ai, storage, notify, search, billing, events, flags
-apps/api/app/modules/   # feature modules (system live; rest stubbed)
-apps/api/app/workers/   # celery (high/normal/background queues)
+apps/api/app/modules/   # auth, hr_core, ats, public (interview booking), audit, system
+apps/api/app/workers/   # celery (high/normal/background queues) + beat schedules
+db/init/                # non-superuser `app` role — required for RLS to actually work
 docs/adr/               # frozen decisions
 frappe_docker/          # gitignored — ERPNext, payroll-rules reference only
 ```

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          # lamoon is the bootstrap superuser ONLY (see db/init/01-app-role.sql) —
+          # the app connects as the non-superuser `app` role created below.
+          # Superusers implicitly BYPASSRLS, which would let this suite pass
+          # while RLS is silently broken (ADR-0002; this bit us once already).
+          POSTGRES_USER: lamoon
+          POSTGRES_PASSWORD: lamoon
+          POSTGRES_DB: lamoon
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lamoon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+
+    env:
+      DATABASE_URL: postgresql+psycopg://app:app@localhost:5432/lamoon
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create non-superuser app role (matches docker-compose db/init)
+        run: PGPASSWORD=lamoon psql -h localhost -U lamoon -d lamoon -f db/init/01-app-role.sql
+
+      - name: Install dependencies
+        working-directory: apps/api
+        run: pip install . pytest ruff mypy
+
+      - name: Lint (ruff)
+        working-directory: apps/api
+        run: ruff check .
+
+      - name: Type check (mypy)
+        working-directory: apps/api
+        run: mypy app
+
+      - name: Run migrations
+        working-directory: apps/api
+        run: alembic upgrade head
+
+      - name: Test
+        working-directory: apps/api
+        run: pytest -q
+
+  # CD: publish the API image to GHCR once tests pass. Needs zero extra
+  # secrets (GITHUB_TOKEN is built into Actions). This is where CD stops —
+  # actually deploying the image to a live server/cloud needs a real target
+  # and credentials this repo doesn't have; that's a follow-up job once a
+  # host is chosen, not something to fabricate here.
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: apps/api
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
