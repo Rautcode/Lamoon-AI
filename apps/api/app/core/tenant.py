@@ -1,25 +1,27 @@
 """Tenant resolution + module-entitlement guard (ARCH §1, platform §7).
 
-resolve_tenant is the single entry: in prod the tenant is set on context by auth
-middleware (from the JWT); until auth ships, dev accepts an X-Company-Id header.
-It sets context.tenant_id so get_db can apply the RLS GUC.
+Tenant now comes from the JWT (real auth) — the dev X-Company-Id shim is gone.
+resolve_tenant verifies the bearer token, sets context (for logging/audit), and
+returns company_id so get_db can apply the RLS GUC.
 """
 from fastapi import Depends, HTTPException, Request
 
 from app.core import context
+from app.core.auth.provider import bearer_token, get_identity_provider
 from app.core.billing import entitlements
-from app.core.config import get_settings
 
 
 def resolve_tenant(request: Request) -> str:
-    cid = context.tenant_id.get()
-    if not cid and get_settings().environment == "dev":
-        # ponytail: dev-only shim. Real tenant comes from the JWT via auth middleware.
-        cid = request.headers.get("X-Company-Id")
-    if not cid:
-        raise HTTPException(401, "no tenant")
-    context.tenant_id.set(cid)
-    return cid
+    token = bearer_token(request)
+    if not token:
+        raise HTTPException(401, "missing bearer token")
+    try:
+        principal = get_identity_provider().verify_session(token)
+    except Exception:
+        raise HTTPException(401, "invalid or expired token") from None
+    context.tenant_id.set(principal.company_id)
+    context.user_id.set(principal.user_id)
+    return principal.company_id
 
 
 def require_module(module_key: str):

@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.models import Base
 from app.modules.ats import models as _ats_models  # noqa: F401 — register tables on Base.metadata
 from app.modules.audit import models as _audit_models  # noqa: F401
+from app.modules.auth import models as _auth_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().database_url)

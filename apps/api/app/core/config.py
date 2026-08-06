@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # Auth
-    jwt_secret: str = "dev-only-change-me"  # ponytail: overridden by env in every real deploy
+    # ponytail: overridden by env in every real deploy; ≥32 bytes to satisfy HS256.
+    jwt_secret: str = "dev-only-insecure-secret-change-me-in-production-0123456789"
     jwt_alg: str = "HS256"
     access_ttl_min: int = 30
     refresh_ttl_days: int = 14
