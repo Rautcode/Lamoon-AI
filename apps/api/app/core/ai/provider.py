@@ -54,7 +54,12 @@ class GeminiProvider:
     """V1: Gemini 2.5 Flash default; Pro only on explicit deep-review demand."""
 
     async def analyze(self, *, prompt_key, prompt_ver, inputs, output_schema, cache_key=None):
-        from google import genai  # lazy: no import cost / key requirement until a real call
+        # Lazy: no import cost / key requirement until a real call. Import the
+        # submodule directly (not `from google import genai` + attribute access)
+        # — mypy resolves `google` as a namespace package shared with
+        # google-auth/google-oauth2 and, via attribute access, fails to see
+        # `genai` as a sibling; a direct submodule import resolves cleanly.
+        from google.genai import Client
 
         s = get_settings()
         if not s.gemini_api_key:
@@ -65,7 +70,7 @@ class GeminiProvider:
         )
         content = f"{prompt}\n\nRESUME + JOB CONTEXT (JSON):\n{json.dumps(inputs)}"
 
-        client = genai.Client(api_key=s.gemini_api_key)
+        client = Client(api_key=s.gemini_api_key)
         resp = client.models.generate_content(
             model=s.ai_default_model,
             contents=content,
@@ -91,11 +96,13 @@ class GeminiProvider:
         )
 
     async def embed(self, texts):
-        from google import genai
+        from google.genai import Client
 
         s = get_settings()
-        client = genai.Client(api_key=s.gemini_api_key)
+        client = Client(api_key=s.gemini_api_key)
         r = client.models.embed_content(model="text-embedding-004", contents=texts)
+        if not r.embeddings:
+            raise RuntimeError("Gemini embed_content returned no embeddings")
         return [e.values for e in r.embeddings]
 
 
