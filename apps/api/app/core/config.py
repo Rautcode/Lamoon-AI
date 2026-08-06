@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "no-reply@lamoon.local"
 
+    # Used to build the candidate-facing booking link. ponytail: points at the
+    # API's own JSON endpoint (usable today) until apps/web has a real page.
+    api_base_url: str = "http://localhost:8000"
+
 
 @lru_cache
 def get_settings() -> Settings:

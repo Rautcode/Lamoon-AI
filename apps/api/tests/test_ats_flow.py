@@ -64,11 +64,11 @@ def test_full_flow(client, headers):
     assert body["tier"] == "A"
     assert body["recommended_action"] == "Immediate Interview"
 
-    # 3a. Tier A → candidate gets a scheduling link, HR gets a heads-up (spec).
-    invites = [m for m in outbox if m["template"] == "interview_invite"]
-    assert len(invites) == 1 and invites[0]["to"] == "asha@example.com"
+    # 3a. Tier A → HR gets a heads-up now (spec). The candidate's scheduling
+    # link goes out once HR actually proposes slots — see test_interview_scheduling.py.
     hr_alerts = [m for m in outbox if m["template"] == "hr_alert"]
     assert len(hr_alerts) == 1 and "Tier A" in hr_alerts[0]["subject"]
+    assert not any(m["template"] == "interview_invite" for m in outbox)
 
     # 4. read it back
     r = client.get(f"/api/v1/ats/applications/{app_id}", headers=headers)

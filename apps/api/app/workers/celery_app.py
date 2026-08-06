@@ -25,6 +25,13 @@ celery_app.conf.update(
             "schedule": crontab(hour=2, minute=0),  # low-traffic hour
             "options": {"queue": "background"},
         },
+        # Workflow 4: Interview Reminder — hourly sweep, reminder_sent_at guards
+        # against double-sends within the 24h window.
+        "ats-interview-reminders-hourly": {
+            "task": "app.workers.celery_app.send_interview_reminders",
+            "schedule": crontab(minute=0),
+            "options": {"queue": "background"},
+        },
     },
 )
 
@@ -36,5 +43,12 @@ def auto_reject_stale() -> dict[str, int]:
     return asyncio.run(auto_reject_stale_all())
 
 
-# ponytail: further task modules (interview reminders, follow-up, dedup cleanup —
-# Workflows 4-6) register the same way once those modules exist.
+@celery_app.task(name="app.workers.celery_app.send_interview_reminders")
+def send_interview_reminders() -> dict[str, int]:
+    from app.modules.ats.tasks import send_interview_reminders_all
+
+    return asyncio.run(send_interview_reminders_all())
+
+
+# ponytail: further task modules (candidate follow-up, dedup cleanup —
+# Workflows 5-6) register the same way once those modules exist.

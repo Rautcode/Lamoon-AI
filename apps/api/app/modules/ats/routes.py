@@ -1,5 +1,5 @@
 """ATS endpoints — the two front doors and the pipeline surface (ARCH §5).
-Email intake front door + interview scheduling are deferred (marked)."""
+Email intake front door is deferred (marked)."""
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -11,10 +11,10 @@ from app.core.db import get_db
 from app.core.notify.base import Notifier, get_notifier
 from app.core.storage.base import checksum, get_blob_store
 from app.core.tenant import resolve_tenant
-from app.modules.ats import extract, pipeline
+from app.modules.ats import extract, interview_service, pipeline
 from app.modules.ats.models import Application, Candidate, JobOpening
 from app.modules.ats.notify_helpers import hr_recipient
-from app.modules.ats.schemas import ApplicationOut, JobIn
+from app.modules.ats.schemas import ApplicationOut, JobIn, ProposeSlotsIn, ProposeSlotsOut
 from app.modules.audit import service as audit
 from app.modules.auth.models import Company
 
@@ -149,3 +149,23 @@ async def screen(
     except ValueError:
         raise HTTPException(404, "not found") from None
     return app
+
+
+@router.post(
+    "/applications/{application_id}/interview-slots", response_model=ProposeSlotsOut
+)
+async def propose_interview_slots(
+    application_id: uuid.UUID,
+    body: ProposeSlotsIn,
+    db: Session = Depends(get_db),
+    notifier: Notifier = Depends(get_notifier),
+):
+    """HR offers interview times; the candidate gets a booking link (no login
+    needed — see /public/interviews/{token})."""
+    app = db.get(Application, application_id)
+    if app is None:
+        raise HTTPException(404, "not found")
+    if not body.slots:
+        raise HTTPException(422, "at least one slot required")
+    link, slots = await interview_service.propose_slots(db, app, body, notifier)
+    return ProposeSlotsOut(booking_token=link.token, slots=slots)

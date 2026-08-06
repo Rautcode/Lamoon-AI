@@ -1,0 +1,10 @@
+Subject: Interview confirmed — {job_title} at {company_name}
+
+Hi {candidate_name},
+
+You're confirmed for {job_title} at {company_name} on {scheduled_at}.
+
+We'll send a reminder before the interview. Reply to this email if anything
+comes up.
+
+— {company_name} Hiring Team

@@ -1,0 +1,10 @@
+Subject: Reminder — your interview for {job_title} is coming up
+
+Hi {candidate_name},
+
+Just a reminder: your interview for {job_title} at {company_name} is
+scheduled for {scheduled_at}.
+
+Good luck!
+
+— {company_name} Hiring Team

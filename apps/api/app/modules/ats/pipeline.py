@@ -34,7 +34,6 @@ from app.modules.ats.models import AIAnalysis, Application, Candidate, JobOpenin
 from app.modules.ats.notify_helpers import hr_recipient
 from app.modules.ats.schemas import Screening
 from app.modules.audit import service as audit
-from app.modules.auth.models import Company
 
 PROMPT_KEY, PROMPT_VER = "resume_screen", "v1"
 SHORTLIST_TIERS = ("A", "B")
@@ -137,34 +136,24 @@ async def _notify_screened(
     db: Session, app: Application, cand: Candidate, job: JobOpening | None,
     tier: str, final: float, notifier: Notifier,
 ) -> None:
-    """Spec's automatic actions: A/B → candidate scheduling link + HR heads-up.
+    """Spec's automatic actions: A/B → HR heads-up now (candidate gets the
+    scheduling link once HR proposes slots — see interview_service.py; no
+    slots exist yet at screening time, so there's nothing to send them).
     C/D → no email yet; the scheduled job rejects after the grace window."""
-    company = db.get(Company, app.company_id)
-    company_name = company.name if company else "the company"
     job_title = job.title if job else "the role"
     hr = hr_recipient(db, app.company_id)
 
-    if tier in SHORTLIST_TIERS:
-        # ponytail: placeholder link — real Calendar-API scheduling is a later module.
-        link = f"https://app.lamoon.hr/interviews/schedule/{app.id}"
-        if cand.email:
-            await notifier.send(
-                to=cand.email, template="interview_invite",
-                ctx={
-                    "candidate_name": cand.full_name or "there",
-                    "job_title": job_title, "company_name": company_name, "scheduling_link": link,
-                },
-            )
-        if hr:
-            await notifier.send(
-                to=hr, template="hr_alert",
-                ctx={
-                    "subject": (
-                        f"Tier {tier} candidate — {job_title}: {cand.full_name or cand.email}"
-                    ),
-                    "body": f"Application {app.id} scored {final}/10 (Tier {tier}). Review: {link}",
-                },
-            )
+    if tier in SHORTLIST_TIERS and hr:
+        await notifier.send(
+            to=hr, template="hr_alert",
+            ctx={
+                "subject": f"Tier {tier} candidate — {job_title}: {cand.full_name or cand.email}",
+                "body": (
+                    f"Application {app.id} scored {final}/10 (Tier {tier}). "
+                    f"Propose interview slots: POST /ats/applications/{app.id}/interview-slots"
+                ),
+            },
+        )
 
 
 def _job_dict(job: JobOpening | None) -> dict:
