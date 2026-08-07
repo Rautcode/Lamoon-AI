@@ -4,6 +4,7 @@ the one place the monolith is wired. Boots without a DB (health is static).
 import uuid
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core import context
 from app.core.config import get_settings
@@ -16,6 +17,15 @@ from app.modules.system.routes import router as system_router
 
 def create_app() -> FastAPI:
     app = FastAPI(title=get_settings().app_name, version="0.1.0")
+
+    origins = [o.strip() for o in get_settings().cors_origins.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.middleware("http")
     async def correlation(request: Request, call_next):

@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     # API's own JSON endpoint (usable today) until apps/web has a real page.
     api_base_url: str = "http://localhost:8000"
 
+    # Comma-separated browser origins allowed to call this API (apps/web's dev
+    # server by default). No wildcard: credentials/auth headers require an
+    # explicit origin list per the CORS spec anyway.
+    cors_origins: str = "http://localhost:3000"
+
 
 @lru_cache
 def get_settings() -> Settings:

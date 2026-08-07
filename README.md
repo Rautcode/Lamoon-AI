@@ -6,13 +6,15 @@ Redis/Celery, with a Next.js frontend. See [`ARCHITECTURE.md`](ARCHITECTURE.md),
 [`docs/adr/`](docs/adr/README.md) for the frozen design.
 
 ## Status
-**V1 feature-complete**: multi-tenant auth (JWT + RBAC), employee directory,
-and the full AI ATS flow — resume intake → Gemini screening → ranking →
-email automation → self-service interview scheduling with reminders. All
-cross-cutting seams (`core/`) are in place; several are still stubs pending a
-real 2nd implementation (Drive, SMS/Slack, Meilisearch, Razorpay — see
-`ARCHITECTURE-2-PLATFORM.md`). 23 tests, `ruff`/`mypy` clean, CI on every
-push. No frontend yet.
+**V1 feature-complete**: multi-tenant auth (JWT + RBAC + OAuth), seat-limit
+enforcement, employee directory, and the full AI ATS flow — resume intake →
+Gemini screening → ranking → email automation → self-service interview
+scheduling with reminders. A real (if minimal) **web UI**: login, employee
+directory, ATS pipeline view. All cross-cutting seams (`core/`) are in place;
+several are still stubs pending a real 2nd implementation (Drive, SMS/Slack,
+Meilisearch, Razorpay, a generic entitlements table beyond seats — see
+`ARCHITECTURE-2-PLATFORM.md`). 32 backend tests, `ruff`/`mypy` clean, CI on
+every push.
 
 ## Run the stack
 ```bash
@@ -55,14 +57,16 @@ credentials this repo doesn't have yet.
 CI only runs once this repo has a GitHub remote and is pushed there.
 
 ## Frontend
-`apps/web` is a placeholder — scaffold with `create-next-app` (see
-`apps/web/README.md`) when UI work starts.
+`apps/web` — Next.js + shadcn/ui + React Query + Zustand. See
+[`apps/web/README.md`](apps/web/README.md) to run it; needs the API up
+(CORS is origin-gated via `CORS_ORIGINS`, defaulting to `localhost:3000`).
 
 ## Layout
 ```
 apps/api/app/core/      # seams: auth, ai, storage, notify, search, billing, events, flags
 apps/api/app/modules/   # auth, hr_core, ats, public (interview booking), audit, system
 apps/api/app/workers/   # celery (high/normal/background queues) + beat schedules
+apps/web/               # Next.js — login, employee directory, ATS pipeline view
 db/init/                # non-superuser `app` role — required for RLS to actually work
 docs/adr/               # frozen decisions
 frappe_docker/          # gitignored — ERPNext, payroll-rules reference only
