@@ -10,7 +10,9 @@ Redis/Celery, with a Next.js frontend. See [`ARCHITECTURE.md`](ARCHITECTURE.md),
 seat-limit enforcement, employee directory + departments, leave management
 (configurable types, request/approve workflow, derived balances), and the
 full AI ATS flow — resume intake → Gemini screening → ranking → email
-automation → self-service interview scheduling with reminders. A real **web
+automation → self-service interview scheduling with reminders. **Lumo**, the
+assistant, answers natural-language questions via Gemini tool-calling grounded
+in real data (with a deterministic fallback when no API key is set). A real **web
 UI** covering all of the above except interview scheduling and true
 Employee Self-Service. All cross-cutting seams (`core/`) are in place;
 several are still stubs pending a real 2nd implementation (Drive, SMS/Slack,

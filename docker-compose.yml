@@ -29,6 +29,10 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://app:app@db:5432/lamoon
       REDIS_URL: redis://redis:6379/0
+      # Passed through from the host. Unset → Lumo answers from its
+      # deterministic router and resume screening is unavailable; the app
+      # still runs. Set it to switch Lumo's model path on.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports: ["8000:8000"]
     depends_on:
       db: {condition: service_healthy}

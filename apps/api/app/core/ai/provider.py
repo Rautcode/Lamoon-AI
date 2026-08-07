@@ -31,6 +31,32 @@ class AIResult:
     cache_hit: bool
 
 
+# --- Tool-calling ----------------------------------------------------------
+# Vendor-neutral by design: the assistant service speaks these shapes and never
+# imports the Gemini SDK, so swapping models is a provider change only.
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    parameters: dict  # JSON Schema
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    name: str
+    args: dict
+
+
+@dataclass
+class ModelTurn:
+    """What the model said this step: prose, tool calls, or both."""
+
+    text: str | None
+    tool_calls: list[ToolCall]
+
+
 class AIProvider(Protocol):
     async def analyze(
         self,
@@ -42,6 +68,9 @@ class AIProvider(Protocol):
         cache_key: str | None = None,
     ) -> AIResult: ...
     async def embed(self, texts: list[str]) -> list[Vector]: ...
+    async def converse(
+        self, *, system: str, messages: list[dict], tools: list[ToolSpec]
+    ) -> ModelTurn: ...
 
 
 def _flash_cost(tokens_in: int, tokens_out: int) -> float:
@@ -94,6 +123,86 @@ class GeminiProvider:
             cost=_flash_cost(ti, to),
             cache_hit=False,
         )
+
+    async def converse(self, *, system, messages, tools):
+        """One step of a tool-calling exchange. The caller owns the loop and the
+        tool execution; this only translates our vendor-neutral message shapes
+        to/from the Gemini SDK.
+
+        ponytail: UNVERIFIED against a live Gemini key — none exists in this
+        environment. Written to the documented google-genai API; the assistant
+        service around it is fully tested with a fake provider. Treat the first
+        real call as the actual integration test.
+        """
+        from google.genai import Client, types
+
+        s = get_settings()
+        if not s.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY not set")
+
+        contents = []
+        for m in messages:
+            role = m["role"]
+            if role == "user":
+                contents.append(
+                    types.Content(role="user", parts=[types.Part(text=m["text"])])
+                )
+            elif role == "model":
+                parts = []
+                if m.get("text"):
+                    parts.append(types.Part(text=m["text"]))
+                for call in m.get("tool_calls", []):
+                    parts.append(
+                        types.Part(
+                            function_call=types.FunctionCall(name=call["name"], args=call["args"])
+                        )
+                    )
+                contents.append(types.Content(role="model", parts=parts))
+            elif role == "tool":
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part(
+                                function_response=types.FunctionResponse(
+                                    name=m["name"], response=m["result"]
+                                )
+                            )
+                        ],
+                    )
+                )
+
+        declarations = [
+            types.FunctionDeclaration(
+                name=t.name, description=t.description, parameters=t.parameters
+            )
+            for t in tools
+        ]
+
+        client = Client(api_key=s.gemini_api_key)
+        resp = client.models.generate_content(
+            model=s.ai_default_model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system,
+                tools=[types.Tool(function_declarations=declarations)],
+                temperature=TEMPERATURE,
+            ),
+        )
+
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+        candidates = getattr(resp, "candidates", None) or []
+        for cand in candidates:
+            content = getattr(cand, "content", None)
+            for part in getattr(content, "parts", None) or []:
+                if getattr(part, "text", None):
+                    text_parts.append(part.text)
+                fc = getattr(part, "function_call", None)
+                if fc is not None:
+                    calls.append(ToolCall(name=fc.name, args=dict(fc.args or {})))
+
+        return ModelTurn(text="".join(text_parts).strip() or None, tool_calls=calls)
 
     async def embed(self, texts):
         from google.genai import Client

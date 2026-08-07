@@ -108,6 +108,17 @@ export const api = {
     },
     balances: (employeeId: string) => request<LeaveBalance[]>(`/leave/balances/${employeeId}`),
   },
+  assistant: {
+    /** Lumo. Server decides between the Gemini path and the keyword fallback;
+     *  `model_used` reports which one answered. */
+    ask: (question: string) =>
+      request<{
+        text: string;
+        items: Array<{ title: string; meta: string | null; href: string | null }>;
+        unmatched: boolean;
+        model_used: boolean;
+      }>("/assistant/ask", { method: "POST", body: JSON.stringify({ question }) }),
+  },
   jobs: {
     list: () => request<Job[]>("/ats/jobs"),
   },

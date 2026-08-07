@@ -53,6 +53,7 @@ export function Lumo() {
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const lastAnswer = [...turns].reverse().find((t) => t.a)?.a ?? null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -136,6 +137,16 @@ export function Lumo() {
           <span className="flex items-center gap-2.5">
             <LumoMark size={24} thinking={busy} />
             <span className="text-[0.9375rem] font-medium">Lumo</span>
+            {/* Honest about which path answered. Both are grounded in real
+                data; only the phrasing differs. */}
+            {lastAnswer && !lastAnswer.modelUsed && (
+              <span
+                className="rounded-full bg-[var(--surface-3)] px-2 py-0.5 text-[0.6875rem] text-[var(--ink-3)]"
+                title="No GEMINI_API_KEY configured — answers come from a deterministic router over your data."
+              >
+                direct
+              </span>
+            )}
           </span>
           <button
             onClick={() => setOpen(false)}

@@ -45,21 +45,32 @@ palette makes it mostly redundant. A permanent 240px sidebar of links you
 rarely click is exactly the habit being avoided. Everything is reachable in
 two keystrokes.
 
-### Lumo's honest scope
+### Lumo's grounding contract
 
-Lumo v1 (`apps/web/lib/lumo-brain.ts`) is a **deterministic intent router over
-the real API**, not an LLM. Every answer is computed from live data via the
-same endpoints the UI uses, so Lumo structurally cannot state something the
-product doesn't know. It handles: headcount, who's on leave, pending
-approvals, candidate search by tier, open roles, departments, and person
-lookup by name. Anything else returns an honest "I can't do that yet" plus
-what it can do.
+Lumo runs Gemini with **tool calling** (`apps/api/app/modules/assistant/`).
+The split that matters:
 
-Wiring it to Gemini for open-ended language is the obvious next step — the
-backend already has an `AIProvider` seam. When that lands, `lumo-brain.ts`
-becomes the **tool layer the model routes through**, not something it
-replaces: grounding answers in real data is the valuable property and must
-survive the upgrade.
+| | Source |
+|---|---|
+| **Prose** | The model |
+| **Facts** | Tools only (`tools.py`) — real, RLS-scoped DB rows |
+| **Clickable results** | Tools only — passed *around* the model, never through it |
+
+So a hallucinated name can never become a link the user can click. If the
+model invents something in its sentence, that's a visible prose error; it can
+never invent an entity the product then treats as real. There's a test
+asserting exactly this (`test_model_cannot_invent_clickable_results`).
+
+**Two paths, one set of tools.** With `GEMINI_API_KEY` set, the model chooses
+tools and writes the answer. Without it — or if the model call fails — a
+keyword router picks one tool and uses its own sentence. The product answers
+correctly either way; the model is an upgrade to the *language*, never to the
+*facts*. The UI shows a small **`direct`** badge when the fallback answered,
+so the interface never implies intelligence that isn't switched on.
+
+Tools available: headcount, who's on leave (any date), pending approvals,
+candidate search by tier with AI scores, open roles, departments, person
+lookup. The loop is bounded to 3 steps so a confused model can't spin.
 
 ---
 
@@ -272,4 +283,9 @@ Honesty about scope matters more than a complete-looking spec:
 - **Analytics / charts** — deferred rather than faked with sample data.
 - **Employee self-service** — employees can't yet file their own leave; HR
   files on their behalf. Needs an ESS role and flow.
-- **Lumo as an LLM** — see §2.
+- **Lumo write actions** — it reads, it doesn't act. "Approve Asha's leave"
+  is not wired, and shouldn't be until there's a confirmation step: a model
+  that can mutate HR records on a misparse is a different risk class than one
+  that answers a question wrongly.
+- **Multi-turn memory** — each question is independent; Lumo doesn't
+  remember the previous one.
