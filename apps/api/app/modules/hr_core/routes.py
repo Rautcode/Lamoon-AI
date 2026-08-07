@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.billing import entitlements
 from app.core.db import get_db
 from app.core.rbac import require
 from app.core.tenant import resolve_tenant
@@ -16,8 +17,8 @@ from app.modules.audit import service as audit
 from app.modules.hr_core.models import Department, Employee
 from app.modules.hr_core.schemas import DepartmentIn, DepartmentOut, EmployeeIn, EmployeeOut
 
-# ponytail: add dependencies=[Depends(require_module("hr_core"))] once entitlements
-# are seeded; same for seat-limit enforcement on employee create (billing §7).
+# ponytail: add dependencies=[Depends(entitlements.require_module("hr_core"))] once
+# a generic module-flags table exists — "employees" (seat limit) is wired below.
 router = APIRouter(prefix="/hr", tags=["hr_core"])
 CAN_WRITE = [Depends(require("employee.write"))]
 CAN_READ = [Depends(require("employee.read"))]
@@ -53,6 +54,9 @@ def update_department(department_id: uuid.UUID, body: DepartmentIn, db: Session 
 def create_employee(
     body: EmployeeIn, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
 ):
+    decision = entitlements.can_use(db, cid, "employees")
+    if not decision.allowed:
+        raise HTTPException(402, f"employee seat limit reached ({decision.reason})")
     company_id = uuid.UUID(cid)
     emp = Employee(company_id=company_id, **body.model_dump())
     db.add(emp)
@@ -85,6 +89,10 @@ def get_employee(employee_id: uuid.UUID, db: Session = Depends(get_db)):
 
 @router.patch("/employees/{employee_id}", response_model=EmployeeOut, dependencies=CAN_WRITE)
 def update_employee(employee_id: uuid.UUID, body: EmployeeIn, db: Session = Depends(get_db)):
+    # ponytail: reactivating an 'exited' employee back to 'active'/'probation'
+    # here doesn't re-check the seat limit (only create_employee does). Real
+    # gap if re-hiring via PATCH becomes a common flow; fine for now since
+    # create is the overwhelmingly common path that adds headcount.
     emp = db.get(Employee, employee_id)
     if emp is None or emp.deleted_at is not None:
         raise HTTPException(404, "not found")

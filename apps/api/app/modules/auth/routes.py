@@ -41,7 +41,10 @@ def bootstrap(body: BootstrapIn) -> dict:
             db, company_name=body.company_name, subdomain=body.subdomain,
             email=body.email, password=body.password,
         )
-        return {"company_id": str(company.id), "subdomain": company.subdomain, "admin": user.email}
+        return {
+            "company_id": str(company.id), "subdomain": company.subdomain,
+            "admin": user.email, "seat_limit": company.seat_limit,
+        }
 
 
 @router.post("/login", response_model=TokenOut)
