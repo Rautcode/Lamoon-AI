@@ -4,9 +4,14 @@ import type {
   Department,
   Employee,
   Job,
+  LeaveBalance,
+  LeaveRequest,
+  LeaveType,
   Me,
   NewDepartment,
   NewEmployee,
+  NewLeaveRequest,
+  NewLeaveType,
 } from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
@@ -84,6 +89,23 @@ export const api = {
     list: () => request<Department[]>("/hr/departments"),
     create: (body: NewDepartment) =>
       request<Department>("/hr/departments", { method: "POST", body: JSON.stringify(body) }),
+  },
+  leave: {
+    types: {
+      list: () => request<LeaveType[]>("/leave/types"),
+      create: (body: NewLeaveType) =>
+        request<LeaveType>("/leave/types", { method: "POST", body: JSON.stringify(body) }),
+    },
+    requests: {
+      list: () => request<LeaveRequest[]>("/leave/requests"),
+      create: (body: NewLeaveRequest) =>
+        request<LeaveRequest>("/leave/requests", { method: "POST", body: JSON.stringify(body) }),
+      approve: (id: string) =>
+        request<LeaveRequest>(`/leave/requests/${id}/approve`, { method: "POST" }),
+      reject: (id: string) =>
+        request<LeaveRequest>(`/leave/requests/${id}/reject`, { method: "POST" }),
+    },
+    balances: (employeeId: string) => request<LeaveBalance[]>(`/leave/balances/${employeeId}`),
   },
   jobs: {
     list: () => request<Job[]>("/ats/jobs"),

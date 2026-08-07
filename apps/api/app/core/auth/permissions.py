@@ -4,8 +4,16 @@ roles). "*" = superuser. Extract to DB when custom roles are actually sold.
 """
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset({"*"}),
-    "hr": frozenset({"ats.read", "ats.write", "employee.read", "employee.write"}),
-    "manager": frozenset({"ats.read", "employee.read"}),
+    "hr": frozenset(
+        {
+            "ats.read", "ats.write", "employee.read", "employee.write",
+            "leave.read", "leave.write", "leave.approve",
+        }
+    ),
+    # manager approves their team's leave but doesn't administer HR data —
+    # leave.write (filing a request on someone's behalf) stays HR-only until
+    # there's a real ESS flow where employees file their own.
+    "manager": frozenset({"ats.read", "employee.read", "leave.read", "leave.approve"}),
     "employee": frozenset({"self.read"}),
 }
 

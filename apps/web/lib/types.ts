@@ -41,6 +41,46 @@ export type NewDepartment = {
   manager_id?: string;
 };
 
+export type LeaveType = {
+  id: string;
+  name: string;
+  annual_quota: number;
+};
+
+export type NewLeaveType = {
+  name: string;
+  annual_quota: number;
+};
+
+export type LeaveRequest = {
+  id: string;
+  employee_id: string;
+  leave_type_id: string;
+  start_date: string;
+  end_date: string;
+  days: number;
+  reason: string | null;
+  status: "pending" | "approved" | "rejected";
+  decided_by: string | null;
+  decided_at: string | null;
+};
+
+export type NewLeaveRequest = {
+  employee_id: string;
+  leave_type_id: string;
+  start_date: string;
+  end_date: string;
+  reason?: string;
+};
+
+export type LeaveBalance = {
+  leave_type_id: string;
+  leave_type_name: string;
+  allocated: number;
+  used: number;
+  remaining: number;
+};
+
 export type Job = {
   id: string;
   title: string;

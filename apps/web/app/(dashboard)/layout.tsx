@@ -51,6 +51,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link href="/departments" className={linkClass("/departments")}>
                 Departments
               </Link>
+              <Link href="/leave" className={linkClass("/leave")}>
+                Leave
+              </Link>
               <Link href="/ats" className={linkClass("/ats")}>
                 ATS
               </Link>

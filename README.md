@@ -6,14 +6,16 @@ Redis/Celery, with a Next.js frontend. See [`ARCHITECTURE.md`](ARCHITECTURE.md),
 [`docs/adr/`](docs/adr/README.md) for the frozen design.
 
 ## Status
-**V1 feature-complete**: multi-tenant auth (JWT + RBAC + OAuth), seat-limit
-enforcement, employee directory, and the full AI ATS flow — resume intake →
-Gemini screening → ranking → email automation → self-service interview
-scheduling with reminders. A real (if minimal) **web UI**: login, employee
-directory, ATS pipeline view. All cross-cutting seams (`core/`) are in place;
+**V1+ feature-complete**: multi-tenant auth (JWT + RBAC + OAuth + revocation),
+seat-limit enforcement, employee directory + departments, leave management
+(configurable types, request/approve workflow, derived balances), and the
+full AI ATS flow — resume intake → Gemini screening → ranking → email
+automation → self-service interview scheduling with reminders. A real **web
+UI** covering all of the above except interview scheduling and true
+Employee Self-Service. All cross-cutting seams (`core/`) are in place;
 several are still stubs pending a real 2nd implementation (Drive, SMS/Slack,
 Meilisearch, Razorpay, a generic entitlements table beyond seats — see
-`ARCHITECTURE-2-PLATFORM.md`). 32 backend tests, `ruff`/`mypy` clean, CI on
+`ARCHITECTURE-2-PLATFORM.md`). 44 backend tests, `ruff`/`mypy` clean, CI on
 every push.
 
 ## Run the stack

@@ -7,10 +7,13 @@ note on why that matters).
 
 ## Status
 Real auth (login → JWT → protected shell, sign-out actually revokes tokens
-server-side, Google/Microsoft "Continue with..." buttons) and two data views:
-the employee directory (list + create, RBAC- and seat-limit-aware) and a
-read-only ATS pipeline view (jobs + applications with tier badges). Everything
-else in the API (interview scheduling, departments, ...) has no UI yet.
+server-side, Google/Microsoft "Continue with..." buttons), the employee
+directory (list + create, RBAC- and seat-limit-aware), departments (with a
+department filter on Employees), leave management (configurable leave types,
+request → approve/reject workflow, balance derived from approved requests),
+and a read-only ATS pipeline view (jobs + applications with tier badges).
+Interview scheduling and Employee Self-Service (employees filing their own
+leave) still have no UI.
 
 ## Run it
 ```bash
@@ -25,7 +28,8 @@ npm run dev
 app/login/            public login page + OAuth buttons
 app/oauth/callback/   lands after Google/Microsoft — parses tokens from the
                        URL fragment (success) or ?error= (failure)
-app/(dashboard)/      protected shell (nav + sign-out) + employees, ats pages
+app/(dashboard)/      protected shell (nav + sign-out) + employees, departments,
+                       leave, ats pages
 lib/api.ts            typed fetch client — attaches JWT, retries once on 401
                        via /auth/refresh, then signs out if that also fails
 lib/auth-store.ts      zustand: tokens (localStorage) + role/permissions (memory)
