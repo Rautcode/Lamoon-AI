@@ -68,4 +68,21 @@ export const api = {
   applications: {
     list: () => request<Application[]>("/ats/applications"),
   },
+  /** Revokes both tokens server-side, then clears local state regardless of
+   * whether the server call succeeds — a network hiccup shouldn't trap the
+   * user signed in locally with no way out. */
+  logout: async () => {
+    const refresh = useAuthStore.getState().refreshToken;
+    if (refresh) {
+      try {
+        await request<void>("/auth/logout", {
+          method: "POST",
+          body: JSON.stringify({ refresh_token: refresh }),
+        });
+      } catch {
+        // best-effort — see doc comment above
+      }
+    }
+    useAuthStore.getState().clear();
+  },
 };

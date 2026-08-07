@@ -4,12 +4,13 @@ tenant scope themselves (service.py / oauth.py).
 """
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from app.core.auth.oauth import OAuthClient, get_oauth_client, is_configured, new_state
 from app.core.auth.permissions import permissions_for
-from app.core.auth.provider import Principal, get_identity_provider
+from app.core.auth.provider import Principal, bearer_token, get_identity_provider
+from app.core.auth.revocation import is_revoked, revoke, ttl_from_exp
 from app.core.config import get_settings
 from app.core.db import open_session
 from app.core.rbac import current_user
@@ -63,10 +64,14 @@ def refresh(body: RefreshIn) -> TokenOut:
     so a demoted/deactivated user is denied immediately rather than at their
     old token's expiry.
 
-    ponytail: no server-side revocation list — a leaked refresh token stays
-    valid until its own expiry (refresh_ttl_days) even after "rotation" here.
-    A Redis-backed jti blocklist + a real /auth/logout is the next hardening
-    step, not built now to keep this to "wire up refresh".
+    Rotation: the presented refresh token is revoked once it's been used —
+    each refresh token is single-use. Replaying an already-rotated (or
+    logged-out) refresh token is rejected here.
+
+    ponytail: no reuse-DETECTION beyond a flat deny — a real IdP would treat
+    replay of an already-rotated token as a compromise signal and revoke the
+    whole token family, not just deny the one request. Flat deny is the
+    correct minimum; family-wide revocation is a further hardening step.
     """
     try:
         claims = decode_token(body.refresh_token)
@@ -74,13 +79,37 @@ def refresh(body: RefreshIn) -> TokenOut:
         raise HTTPException(401, "invalid or expired refresh token") from None
     if claims.get("typ") != "refresh":
         raise HTTPException(401, "not a refresh token")
+    if is_revoked(claims.get("jti")):
+        raise HTTPException(401, "refresh token revoked")
 
     with open_session() as db:
         service.set_tenant(db, claims["cid"])
         user = db.get(User, uuid.UUID(claims["sub"]))
         if user is None or not user.is_active or user.deleted_at is not None:
             raise HTTPException(401, "account no longer active")
-        return _issue(user)
+        tokens = _issue(user)
+
+    revoke(claims["jti"], ttl_from_exp(int(claims["exp"])))
+    return tokens
+
+
+@router.post("/logout", status_code=204, dependencies=[Depends(current_user)])
+def logout(body: RefreshIn, request: Request) -> None:
+    """Revokes both the access token used to call this endpoint and the
+    presented refresh token, so sign-out is immediate server-side — not just
+    the client discarding tokens it might not have actually deleted.
+    `dependencies=[current_user]` means a garbage/expired access token 401s
+    before we even get here, same as any other authenticated route."""
+    for token in (bearer_token(request), body.refresh_token):
+        if not token:
+            continue
+        try:
+            claims = decode_token(token)
+        except Exception:
+            continue  # already invalid/expired — nothing to revoke
+        jti = claims.get("jti")
+        if jti:
+            revoke(jti, ttl_from_exp(int(claims["exp"])))
 
 
 @router.get("/me", response_model=MeOut)

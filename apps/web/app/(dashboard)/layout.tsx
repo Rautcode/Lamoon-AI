@@ -59,8 +59,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               variant="outline"
               size="sm"
               onClick={() => {
-                clear();
-                router.push("/login");
+                // Revokes the tokens server-side (immediate, not just "the
+                // client forgot them") before routing away.
+                api.logout().then(() => router.push("/login"));
               }}
             >
               Sign out
