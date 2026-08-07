@@ -33,3 +33,7 @@ class MeOut(BaseModel):
     company_id: str
     role: str
     permissions: list[str]
+    # Identity for the UI to greet by. Read from the DB rather than the JWT so
+    # a rename takes effect on next page load, not next token refresh.
+    email: str | None = None
+    full_name: str | None = None

@@ -12,7 +12,7 @@ from app.core.notify.base import Notifier, get_notifier
 from app.core.storage.base import checksum, get_blob_store
 from app.core.tenant import resolve_tenant
 from app.modules.ats import extract, interview_service, pipeline
-from app.modules.ats.models import Application, Candidate, JobOpening
+from app.modules.ats.models import AIAnalysis, Application, Candidate, JobOpening
 from app.modules.ats.notify_helpers import hr_recipient
 from app.modules.ats.schemas import ApplicationOut, JobIn, ProposeSlotsIn, ProposeSlotsOut
 from app.modules.audit import service as audit
@@ -122,10 +122,51 @@ async def apply(
     return {"application_id": app.id, "candidate_id": candidate.id, "status": app.status}
 
 
+def _enrich(db: Session, apps: list[Application]) -> list[ApplicationOut]:
+    """Attach candidate name + latest AI score to each application in 2 queries
+    total, rather than 2 per row. The pipeline board renders every open
+    application at once, so the N+1 version is the difference between one
+    round trip and a hundred."""
+    if not apps:
+        return []
+    cand_ids = {a.candidate_id for a in apps}
+    app_ids = [a.id for a in apps]
+
+    candidates = {
+        c.id: c for c in db.scalars(select(Candidate).where(Candidate.id.in_(cand_ids))).all()
+    }
+    # One analysis per application in practice; last-wins if a re-screen added
+    # another, which matches "show the current score".
+    analyses: dict[uuid.UUID, AIAnalysis] = {}
+    for an in db.scalars(
+        select(AIAnalysis)
+        .where(AIAnalysis.application_id.in_(app_ids))
+        .order_by(AIAnalysis.created_at)
+    ).all():
+        analyses[an.application_id] = an
+
+    out = []
+    for a in apps:
+        cand = candidates.get(a.candidate_id)
+        score = analyses.get(a.id)
+        out.append(
+            ApplicationOut(
+                id=a.id, status=a.status, tier=a.tier,
+                recommended_action=a.recommended_action,
+                candidate_id=a.candidate_id, job_opening_id=a.job_opening_id,
+                candidate_name=cand.full_name if cand else None,
+                candidate_email=cand.email if cand else None,
+                final_score=score.final_score if score else None,
+                summary=score.summary if score else None,
+            )
+        )
+    return out
+
+
 @router.get("/applications", response_model=list[ApplicationOut])
 def list_applications(db: Session = Depends(get_db)):
-    rows = db.scalars(select(Application).where(Application.deleted_at.is_(None))).all()
-    return rows
+    rows = list(db.scalars(select(Application).where(Application.deleted_at.is_(None))).all())
+    return _enrich(db, rows)
 
 
 @router.get("/applications/{application_id}", response_model=ApplicationOut)
@@ -133,7 +174,7 @@ def get_application(application_id: uuid.UUID, db: Session = Depends(get_db)):
     app = db.get(Application, application_id)
     if app is None:
         raise HTTPException(404, "not found")
-    return app
+    return _enrich(db, [app])[0]
 
 
 @router.post("/applications/{application_id}/screen", response_model=ApplicationOut)

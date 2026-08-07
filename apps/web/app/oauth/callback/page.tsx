@@ -48,7 +48,7 @@ export default function OAuthCallbackPage() {
       .me()
       .then((me) => {
         setProfile(me.role, me.permissions, me.company_id);
-        router.replace("/employees");
+        router.replace("/home");
       })
       .catch(() => setError("Signed in, but couldn't load your profile. Please try again."));
     // Runs once on mount — the redirect params are only meaningful the first time.

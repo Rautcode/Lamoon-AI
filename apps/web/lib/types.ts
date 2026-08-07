@@ -7,6 +7,8 @@ export type Me = {
   company_id: string;
   role: string;
   permissions: string[];
+  email: string | null;
+  full_name: string | null;
 };
 
 export type Employee = {
@@ -94,4 +96,8 @@ export type Application = {
   recommended_action: string | null;
   candidate_id: string;
   job_opening_id: string | null;
+  candidate_name: string | null;
+  candidate_email: string | null;
+  final_score: number | null;
+  summary: string | null;
 };

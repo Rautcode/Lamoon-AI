@@ -5,15 +5,20 @@ Zustand, per [`ARCHITECTURE.md`](../../ARCHITECTURE.md). Talks to `apps/api`
 over plain REST — no server-side proxy/BFF yet (see the auth-store ponytail
 note on why that matters).
 
+**Design language and interaction model: [`DESIGN.md`](../../DESIGN.md).**
+Read that first — it explains the one rule the whole UI obeys.
+
 ## Status
-Real auth (login → JWT → protected shell, sign-out actually revokes tokens
-server-side, Google/Microsoft "Continue with..." buttons), the employee
-directory (list + create, RBAC- and seat-limit-aware), departments (with a
-department filter on Employees), leave management (configurable leave types,
-request → approve/reject workflow, balance derived from approved requests),
-and a read-only ATS pipeline view (jobs + applications with tier badges).
+Real auth (login → JWT → protected shell, sign-out revokes tokens
+server-side, Google/Microsoft sign-in), an AI Workspace home, a hiring
+pipeline board with AI scores and a candidate inspector, the people directory
+and per-person profile, leave (decisions-first), and the org tree. Plus the
+three shell surfaces: **Lumo** (`⌘J`), the **command palette** (`⌘K`), and a
+hover-expanding rail. Light + dark themes.
+
 Interview scheduling and Employee Self-Service (employees filing their own
-leave) still have no UI.
+leave) still have no UI — see DESIGN.md §11 for everything deliberately not
+built and why.
 
 ## Run it
 ```bash
@@ -25,13 +30,18 @@ npm run dev
 
 ## Layout
 ```
-app/login/            public login page + OAuth buttons
-app/oauth/callback/   lands after Google/Microsoft — parses tokens from the
-                       URL fragment (success) or ?error= (failure)
-app/(dashboard)/      protected shell (nav + sign-out) + employees, departments,
-                       leave, ats pages
-lib/api.ts            typed fetch client — attaches JWT, retries once on 401
-                       via /auth/refresh, then signs out if that also fails
+app/login/             workspace + password, or Google/Microsoft
+app/oauth/callback/    parses tokens from the URL fragment (or ?error=)
+app/(workspace)/       authenticated shell: rail + palette + Lumo
+  home/                AI Workspace — greeting, ask, "needs you"
+  hiring/              pipeline board + candidate inspector
+  people/ , people/[id]  directory + one intelligent page per person
+  time/                leave, decisions first
+  org/                 department tree
+components/lamoon/     the design system (primitives, rail, palette, Lumo)
+lib/lumo-brain.ts      Lumo's intent router — real data, not an LLM (DESIGN.md §2)
+lib/api.ts             typed fetch client — attaches JWT, retries once on 401
+                        via /auth/refresh, then signs out if that also fails
 lib/auth-store.ts      zustand: tokens (localStorage) + role/permissions (memory)
 lib/types.ts           hand-written mirrors of the API's response_models
 ```

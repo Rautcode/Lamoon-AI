@@ -82,6 +82,7 @@ export const api = {
         : "";
       return request<Employee[]>(`/hr/employees${qs}`);
     },
+    get: (id: string) => request<Employee>(`/hr/employees/${id}`),
     create: (body: NewEmployee) =>
       request<Employee>("/hr/employees", { method: "POST", body: JSON.stringify(body) }),
   },

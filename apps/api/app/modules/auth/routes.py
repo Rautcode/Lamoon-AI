@@ -114,10 +114,15 @@ def logout(body: RefreshIn, request: Request) -> None:
 
 @router.get("/me", response_model=MeOut)
 def me(principal: Principal = Depends(current_user)) -> MeOut:
-    return MeOut(
-        user_id=principal.user_id, company_id=principal.company_id,
-        role=principal.role, permissions=sorted(principal.permissions),
-    )
+    with open_session() as db:
+        service.set_tenant(db, principal.company_id)
+        user = db.get(User, uuid.UUID(principal.user_id))
+        return MeOut(
+            user_id=principal.user_id, company_id=principal.company_id,
+            role=principal.role, permissions=sorted(principal.permissions),
+            email=user.email if user else None,
+            full_name=user.full_name if user else None,
+        )
 
 
 def _redirect_uri(provider: str) -> str:

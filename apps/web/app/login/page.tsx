@@ -4,10 +4,9 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useAuthStore } from "@/lib/auth-store";
-import { Button } from "@/components/ui/button";
+import { Action } from "@/components/lamoon/primitives";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,19 +18,17 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [oauthNotice, setOauthNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Static per deployment (env-driven) — no point refetching mid-session.
   const { data: providers } = useQuery({
     queryKey: ["oauth-providers"],
     queryFn: api.oauthProviders,
     staleTime: Infinity,
   });
 
-  // Already signed in (e.g. reloaded /login directly) — skip the form.
   useEffect(() => {
-    if (accessToken) router.replace("/employees");
+    if (accessToken) router.replace("/home");
   }, [accessToken, router]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -43,7 +40,7 @@ export default function LoginPage() {
       setTokens(tokens.access_token, tokens.refresh_token);
       const me = await api.me();
       setProfile(me.role, me.permissions, me.company_id);
-      router.push("/employees");
+      router.push("/home");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Login failed");
     } finally {
@@ -52,99 +49,93 @@ export default function LoginPage() {
   }
 
   function startOAuth(provider: "google" | "microsoft") {
-    setOauthNotice(null);
-    // OAuth's callback only gets an email back from the provider, never a
-    // tenant — the company has to come from here, before the redirect chain
-    // to Google/Microsoft even starts (see core/auth/oauth.py::new_state).
-    if (!company.trim()) {
-      setOauthNotice("Enter your company subdomain above first.");
-      return;
-    }
-    if (!providers?.[provider]) {
-      const label = provider === "google" ? "Google" : "Microsoft";
-      setOauthNotice(`${label} sign-in isn't configured for this deployment.`);
-      return;
-    }
+    setNotice(null);
+    // The OAuth callback only gets an email back, never a tenant — the company
+    // has to be known before the redirect chain starts.
+    if (!company.trim()) return setNotice("Enter your company workspace first.");
+    if (!providers?.[provider])
+      return setNotice(
+        `${provider === "google" ? "Google" : "Microsoft"} sign-in isn't configured here.`
+      );
     window.location.href = api.oauthStartUrl(provider, company);
   }
 
   return (
-    <div className="flex min-h-screen flex-1 items-center justify-center bg-muted/40 p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Lamoon HR</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="company">Company subdomain</Label>
-              <Input
-                id="company"
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
-                placeholder="acme"
-                autoComplete="organization"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="username"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                required
-              />
-            </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Signing in…" : "Sign in"}
-            </Button>
-          </form>
+    <div className="flex min-h-screen items-center justify-center px-5 py-12">
+      <div className="rise w-full max-w-[380px]">
+        <div className="mb-10 flex flex-col items-start gap-4">
+          <span className="lumo-ring size-7 rounded-[9px]" />
+          <div>
+            <h1 className="t-title">Lamoon</h1>
+            <p className="mt-1 t-meta">Sign in to your workspace.</p>
+          </div>
+        </div>
 
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">Or</span>
-            </div>
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="company" className="t-micro">
+              Workspace
+            </Label>
+            <Input
+              id="company"
+              value={company}
+              onChange={(e) => setCompany(e.target.value)}
+              placeholder="acme"
+              autoComplete="organization"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="email" className="t-micro">
+              Email
+            </Label>
+            <Input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="password" className="t-micro">
+              Password
+            </Label>
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
           </div>
 
-          <div className="space-y-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={() => startOAuth("google")}
-            >
-              Continue with Google
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={() => startOAuth("microsoft")}
-            >
-              Continue with Microsoft
-            </Button>
-          </div>
-          {oauthNotice && <p className="text-sm text-muted-foreground">{oauthNotice}</p>}
-        </CardContent>
-      </Card>
+          {error && <p className="text-[0.8125rem] text-[var(--critical)]">{error}</p>}
+
+          <Action type="submit" className="w-full" disabled={loading}>
+            {loading ? "Signing in…" : "Continue"}
+          </Action>
+        </form>
+
+        <div className="my-6 flex items-center gap-3">
+          <span className="h-px flex-1 bg-[var(--hairline)]" />
+          <span className="t-micro">or</span>
+          <span className="h-px flex-1 bg-[var(--hairline)]" />
+        </div>
+
+        <div className="space-y-2">
+          <Action variant="quiet" className="w-full" onClick={() => startOAuth("google")}>
+            Continue with Google
+          </Action>
+          <Action variant="quiet" className="w-full" onClick={() => startOAuth("microsoft")}>
+            Continue with Microsoft
+          </Action>
+        </div>
+
+        {notice && <p className="mt-3 text-[0.8125rem] text-[var(--ink-3)]">{notice}</p>}
+      </div>
     </div>
   );
 }

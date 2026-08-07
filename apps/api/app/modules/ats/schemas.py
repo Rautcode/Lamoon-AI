@@ -35,6 +35,13 @@ class ApplicationOut(BaseModel):
     recommended_action: str | None
     candidate_id: uuid.UUID
     job_opening_id: uuid.UUID | None
+    # Denormalised for the pipeline board, which would otherwise need an N+1
+    # of candidate/analysis lookups to render a single card. Populated by the
+    # list/detail routes (batched), not by the ORM relationship.
+    candidate_name: str | None = None
+    candidate_email: str | None = None
+    final_score: float | None = None
+    summary: str | None = None
 
     model_config = {"from_attributes": True}
 
