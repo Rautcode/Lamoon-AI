@@ -32,8 +32,11 @@ class Settings(BaseSettings):
     microsoft_client_id: str = ""
     microsoft_client_secret: str = ""
     microsoft_tenant: str = "common"
-    # Must exactly match the redirect URI registered with each provider.
-    oauth_redirect_base: str = "http://localhost:8000"
+    # Where a successful/failed OAuth callback sends the browser (this app has
+    # no server-rendered login page, so the callback can't render one itself).
+    # Success: tokens in the URL FRAGMENT (#...), which never leaves the
+    # browser — not query params, not logged by any server/proxy in between.
+    oauth_frontend_redirect: str = "http://localhost:3000/oauth/callback"
 
     # AI
     gemini_api_key: str = ""
@@ -49,8 +52,10 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "no-reply@lamoon.local"
 
-    # Used to build the candidate-facing booking link. ponytail: points at the
-    # API's own JSON endpoint (usable today) until apps/web has a real page.
+    # This API's own externally-reachable base URL. Used for the candidate
+    # booking link (ponytail: points at the JSON endpoint directly until
+    # apps/web has a real page) and to build the OAuth redirect_uri, which
+    # must exactly match what's registered with each provider's app.
     api_base_url: str = "http://localhost:8000"
 
     # Comma-separated browser origins allowed to call this API (apps/web's dev

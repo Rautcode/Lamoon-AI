@@ -6,10 +6,11 @@ over plain REST — no server-side proxy/BFF yet (see the auth-store ponytail
 note on why that matters).
 
 ## Status
-Real auth (login → JWT → protected shell) and two data views: the employee
-directory (list + create, RBAC- and seat-limit-aware) and a read-only ATS
-pipeline view (jobs + applications with tier badges). Everything else in the
-API (interview scheduling, OAuth, departments, ...) has no UI yet.
+Real auth (login → JWT → protected shell, sign-out actually revokes tokens
+server-side, Google/Microsoft "Continue with..." buttons) and two data views:
+the employee directory (list + create, RBAC- and seat-limit-aware) and a
+read-only ATS pipeline view (jobs + applications with tier badges). Everything
+else in the API (interview scheduling, departments, ...) has no UI yet.
 
 ## Run it
 ```bash
@@ -21,13 +22,23 @@ npm run dev
 
 ## Layout
 ```
-app/login/            public login page
+app/login/            public login page + OAuth buttons
+app/oauth/callback/   lands after Google/Microsoft — parses tokens from the
+                       URL fragment (success) or ?error= (failure)
 app/(dashboard)/      protected shell (nav + sign-out) + employees, ats pages
 lib/api.ts            typed fetch client — attaches JWT, retries once on 401
                        via /auth/refresh, then signs out if that also fails
 lib/auth-store.ts      zustand: tokens (localStorage) + role/permissions (memory)
 lib/types.ts           hand-written mirrors of the API's response_models
 ```
+
+## OAuth needs real credentials to actually work
+The buttons are real and wired end-to-end, but there are no Google/Microsoft
+app credentials in this environment (or, likely, yours). With
+`GOOGLE_CLIENT_ID`/`MICROSOFT_CLIENT_ID` unset, `/auth/oauth/providers`
+reports `false` and clicking a button shows "isn't configured" instead of a
+dead 503. Set real credentials in the API's env to light one up — nothing on
+the frontend needs to change.
 
 ## Known limitations (by design, not oversight)
 - **Tokens in localStorage** — XSS-exposed. Fine for an internal V1 tool; a

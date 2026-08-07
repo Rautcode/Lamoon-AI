@@ -141,7 +141,17 @@ def test_oauth_unconfigured_provider_503(client):
     assert r.status_code == 503
 
 
+def test_oauth_providers_reports_configured_state(client, google_configured):
+    r = client.get("/api/v1/auth/oauth/providers")
+    assert r.status_code == 200
+    assert r.json() == {"google": True, "microsoft": False}
+
+
 def test_oauth_login_existing_user(client, headers, google_configured):
+    """The callback is a browser redirect target, not an API endpoint — it
+    never returns JSON. Success lands tokens in the URL FRAGMENT of a
+    redirect to the frontend; nothing before the `#` (server logs, proxies)
+    ever sees them."""
     client.post("/api/v1/auth/bootstrap", json=COMPANY)
     _override_oauth(COMPANY["email"])
     try:
@@ -150,19 +160,26 @@ def test_oauth_login_existing_user(client, headers, google_configured):
         )
         state = start.headers["location"].split("state=")[1]
 
-        r = client.get(f"/api/v1/auth/oauth/google/callback?code=fake-code&state={state}")
-        assert r.status_code == 200, r.text
-        tokens = r.json()
+        r = client.get(
+            f"/api/v1/auth/oauth/google/callback?code=fake-code&state={state}",
+            follow_redirects=False,
+        )
+        assert r.status_code in (302, 307)
+        location = r.headers["location"]
+        assert location.startswith(get_settings().oauth_frontend_redirect)
+        assert "#access_token=" in location and "refresh_token=" in location
 
+        fragment = location.split("#", 1)[1]
+        parsed = dict(pair.split("=", 1) for pair in fragment.split("&"))
         me = client.get(
-            "/api/v1/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {parsed['access_token']}"}
         )
         assert me.json()["role"] == "admin"
     finally:
         app.dependency_overrides.pop(oauth_client_dependency, None)
 
 
-def test_oauth_unknown_email_403(client, headers, google_configured):
+def test_oauth_unknown_email_redirects_with_error(client, headers, google_configured):
     client.post("/api/v1/auth/bootstrap", json=COMPANY)
     _override_oauth("nobody-registered@acme.test")
     try:
@@ -170,12 +187,20 @@ def test_oauth_unknown_email_403(client, headers, google_configured):
             "/api/v1/auth/oauth/google/start", params={"company": "acme"}, follow_redirects=False
         )
         state = start.headers["location"].split("state=")[1]
-        r = client.get(f"/api/v1/auth/oauth/google/callback?code=fake-code&state={state}")
-        assert r.status_code == 403
+        r = client.get(
+            f"/api/v1/auth/oauth/google/callback?code=fake-code&state={state}",
+            follow_redirects=False,
+        )
+        assert r.status_code in (302, 307)
+        assert r.headers["location"] == f"{get_settings().oauth_frontend_redirect}?error=no_account"
     finally:
         app.dependency_overrides.pop(oauth_client_dependency, None)
 
 
-def test_oauth_tampered_state_400(client):
-    r = client.get("/api/v1/auth/oauth/google/callback?code=fake-code&state=not-a-real-jwt")
-    assert r.status_code == 400
+def test_oauth_tampered_state_redirects_with_error(client):
+    r = client.get(
+        "/api/v1/auth/oauth/google/callback?code=fake-code&state=not-a-real-jwt",
+        follow_redirects=False,
+    )
+    assert r.status_code in (302, 307)
+    assert r.headers["location"] == f"{get_settings().oauth_frontend_redirect}?error=invalid_state"

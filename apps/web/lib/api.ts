@@ -57,6 +57,11 @@ export const api = {
       body: JSON.stringify({ company, email, password }),
     }),
   me: () => request<Me>("/auth/me"),
+  oauthProviders: () => request<Record<"google" | "microsoft", boolean>>("/auth/oauth/providers"),
+  /** Not a fetch — a real browser navigation to the API, which redirects on
+   * to Google/Microsoft. Exported so the login page doesn't hardcode the URL. */
+  oauthStartUrl: (provider: "google" | "microsoft", company: string) =>
+    `${API_URL}/auth/oauth/${provider}/start?company=${encodeURIComponent(company)}`,
   employees: {
     list: () => request<Employee[]>("/hr/employees"),
     create: (body: NewEmployee) =>

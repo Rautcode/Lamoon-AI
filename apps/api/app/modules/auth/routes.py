@@ -125,6 +125,14 @@ def _redirect_uri(provider: str) -> str:
     return f"{get_settings().api_base_url}/api/v1/auth/oauth/{provider}/callback"
 
 
+@router.get("/oauth/providers")
+def oauth_providers() -> dict[str, bool]:
+    """Lets the UI show/enable only what's actually configured, instead of
+    leading a click into a raw 503 — there are no real Google/Microsoft app
+    credentials in most environments running this (including this one)."""
+    return {"google": is_configured("google"), "microsoft": is_configured("microsoft")}
+
+
 @router.get("/oauth/{provider}/start")
 def oauth_start(provider: str, company: str = Query(..., description="company subdomain")):
     if provider not in ("google", "microsoft"):
@@ -146,22 +154,40 @@ def oauth_client_dependency(provider: str) -> OAuthClient:
     return get_oauth_client(provider)
 
 
-@router.get("/oauth/{provider}/callback", response_model=TokenOut)
+@router.get("/oauth/{provider}/callback")
 async def oauth_callback(
     provider: str, code: str, state: str,
     client: OAuthClient = Depends(oauth_client_dependency),
-) -> TokenOut:
+) -> RedirectResponse:
+    """Google/Microsoft land the browser HERE — there is no API client on the
+    other end to hand a JSON body to, only whatever's rendered next. Every
+    outcome (success or otherwise) redirects to the frontend; nothing here
+    should ever show the browser a raw JSON error page.
+
+    Success: tokens go in the URL fragment (`#...`), not query params — the
+    fragment never leaves the browser (no server/proxy/access-log sees it).
+    Failure: `?error=<code>` for the frontend to render a message from.
+    """
+    frontend = get_settings().oauth_frontend_redirect
+
     try:
         state_claims = decode_token(state)
+        if state_claims.get("typ") != "oauth_state" or state_claims.get("provider") != provider:
+            raise ValueError("state mismatch")
     except Exception:
-        raise HTTPException(400, "invalid or expired state") from None
-    if state_claims.get("typ") != "oauth_state" or state_claims.get("provider") != provider:
-        raise HTTPException(400, "invalid state")
+        return RedirectResponse(f"{frontend}?error=invalid_state")
 
-    profile = await client.exchange(code, _redirect_uri(provider))
+    try:
+        profile = await client.exchange(code, _redirect_uri(provider))
+    except Exception:
+        return RedirectResponse(f"{frontend}?error=exchange_failed")
 
     with open_session() as db:
         user = service.authenticate_oauth(db, state_claims["company"], profile.email, provider)
         if user is None:
-            raise HTTPException(403, "no account found for this email — ask an admin to add you")
-        return _issue(user)
+            return RedirectResponse(f"{frontend}?error=no_account")
+        tokens = _issue(user)
+
+    return RedirectResponse(
+        f"{frontend}#access_token={tokens.access_token}&refresh_token={tokens.refresh_token}"
+    )
