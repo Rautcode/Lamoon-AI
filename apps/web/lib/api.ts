@@ -1,5 +1,13 @@
 import { useAuthStore } from "@/lib/auth-store";
-import type { Application, Employee, Job, Me, NewEmployee } from "@/lib/types";
+import type {
+  Application,
+  Department,
+  Employee,
+  Job,
+  Me,
+  NewDepartment,
+  NewEmployee,
+} from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -63,9 +71,19 @@ export const api = {
   oauthStartUrl: (provider: "google" | "microsoft", company: string) =>
     `${API_URL}/auth/oauth/${provider}/start?company=${encodeURIComponent(company)}`,
   employees: {
-    list: () => request<Employee[]>("/hr/employees"),
+    list: (params?: { department_id?: string }) => {
+      const qs = params?.department_id
+        ? `?department_id=${encodeURIComponent(params.department_id)}`
+        : "";
+      return request<Employee[]>(`/hr/employees${qs}`);
+    },
     create: (body: NewEmployee) =>
       request<Employee>("/hr/employees", { method: "POST", body: JSON.stringify(body) }),
+  },
+  departments: {
+    list: () => request<Department[]>("/hr/departments"),
+    create: (body: NewDepartment) =>
+      request<Department>("/hr/departments", { method: "POST", body: JSON.stringify(body) }),
   },
   jobs: {
     list: () => request<Job[]>("/ats/jobs"),

@@ -28,6 +28,19 @@ export type NewEmployee = {
   joined_on?: string;
 };
 
+export type Department = {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  manager_id: string | null; // an Employee id, not a User id
+};
+
+export type NewDepartment = {
+  name: string;
+  parent_id?: string;
+  manager_id?: string;
+};
+
 export type Job = {
   id: string;
   title: string;
