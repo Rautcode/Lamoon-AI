@@ -37,12 +37,16 @@ def company(client):
         json={"company": sub, "email": body["email"], "password": "pw123456"},
     ).json()
     headers = {"Authorization": f"Bearer {login['access_token']}"}
-    emp = client.post("/api/v1/hr/employees", json={"full_name": "Asha Rao"}, headers=headers).json()
+    emp = client.post(
+        "/api/v1/hr/employees", json={"full_name": "Asha Rao"}, headers=headers
+    ).json()
     return {"sub": sub, "headers": headers, "employee_id": emp["id"]}
 
 
 def _make_type(client, headers, name: str, quota: int) -> dict:
-    r = client.post("/api/v1/leave/types", json={"name": name, "annual_quota": quota}, headers=headers)
+    r = client.post(
+        "/api/v1/leave/types", json={"name": name, "annual_quota": quota}, headers=headers
+    )
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -130,7 +134,8 @@ def test_approval_exceeding_balance_is_rejected(client, company):
     req1 = _make_request(client, headers, emp_id, lt["id"], date.today(), 2)  # uses the full quota
     req2 = _make_request(client, headers, emp_id, lt["id"], date.today() + timedelta(days=30), 2)
 
-    assert client.post(f"/api/v1/leave/requests/{req1['id']}/approve", headers=headers).status_code == 200
+    r1 = client.post(f"/api/v1/leave/requests/{req1['id']}/approve", headers=headers)
+    assert r1.status_code == 200
     r = client.post(f"/api/v1/leave/requests/{req2['id']}/approve", headers=headers)
     assert r.status_code == 409
     assert "exceed" in r.json()["detail"].lower()
