@@ -1,14 +1,18 @@
 import { useAuthStore } from "@/lib/auth-store";
 import type {
   Application,
+  AttendancePolicy,
+  DaySummary,
   Department,
   Employee,
+  EmployeeAttendance,
   Job,
   LeaveBalance,
   LeaveRequest,
   LeaveType,
   Me,
   NewDepartment,
+  Presence,
   NewEmployee,
   NewLeaveRequest,
   NewLeaveType,
@@ -99,6 +103,16 @@ export const api = {
     profile: () => request<Employee>("/me"),
     balances: () => request<LeaveBalance[]>("/me/leave/balances"),
     requests: () => request<LeaveRequest[]>("/me/leave/requests"),
+    /** Record my own check-in/out. Server sets the timestamp. */
+    punch: (kind: "in" | "out") =>
+      request<DaySummary>("/me/attendance/punch", {
+        method: "POST",
+        body: JSON.stringify({ kind }),
+      }),
+    attendance: (days = 14) => request<DaySummary[]>(`/me/attendance?days=${days}`),
+    /** "Today" per the COMPANY's timezone — never computed in the browser,
+     *  whose UTC date diverges from company-local every evening in IST. */
+    attendanceToday: () => request<DaySummary>("/me/attendance/today"),
     fileLeave: (body: {
       leave_type_id: string;
       start_date: string;
@@ -138,6 +152,12 @@ export const api = {
         unmatched: boolean;
         model_used: boolean;
       }>("/assistant/ask", { method: "POST", body: JSON.stringify({ question }) }),
+  },
+  attendance: {
+    today: () => request<Presence[]>("/attendance/today"),
+    /** Everyone x N days in one call — the heatmap would otherwise be N+1. */
+    summary: (days = 14) => request<EmployeeAttendance[]>(`/attendance/summary?days=${days}`),
+    policy: () => request<AttendancePolicy>("/attendance/policy"),
   },
   jobs: {
     list: () => request<Job[]>("/ats/jobs"),

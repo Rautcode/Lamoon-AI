@@ -10,6 +10,7 @@ from app.core import context
 from app.core.config import get_settings
 from app.modules.assistant.routes import router as assistant_router
 from app.modules.ats.routes import router as ats_router
+from app.modules.attendance.routes import router as attendance_router
 from app.modules.auth.routes import router as auth_router
 from app.modules.ess.routes import router as ess_router
 from app.modules.hr_core.routes import router as hr_core_router
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(hr_core_router, prefix="/api/v1")
     app.include_router(ess_router, prefix="/api/v1")
+    app.include_router(attendance_router, prefix="/api/v1")
     app.include_router(leave_router, prefix="/api/v1")
     app.include_router(ats_router, prefix="/api/v1")
     app.include_router(assistant_router, prefix="/api/v1")

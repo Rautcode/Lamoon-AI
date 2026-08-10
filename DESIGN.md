@@ -81,17 +81,25 @@ lookup. The loop is bounded to 3 steps so a confused model can't spin.
 /oauth/callback            Token handoff (fragment), never shown for long
 │
 └── (workspace)            Authenticated shell: rail + palette + Lumo
+    /me                    Self-service — today's clock, leave balance, own
+                             requests. The ONLY page an employee-role sees.
     /home                  AI Workspace — greeting, ask, signals
     /hiring                Pipeline board (Kanban) + candidate inspector
     /people                Directory (tiles, department filter)
     /people/[id]           One intelligent page per person
     /time                  Leave — decisions first, then history
+    /attendance            Presence now + a 14-day hours heatmap
     /org                   Department tree + unassigned people
 ```
 
-Five destinations, deliberately. Every additional top-level nav item is a
-tax on the whole product's clarity; modules that arrive later (payroll,
-performance) should earn their slot or live inside an existing one.
+Nav is **derived from permissions**, not fixed (`lib/nav.ts`) — an employee
+holds only `self.*` and sees exactly one destination, `/me`; HR sees six. One
+source of truth feeds both the rail and the route guard, so a link can never
+appear that the guard would bounce.
+
+Every additional top-level item is a tax on the product's clarity; modules
+that arrive later (payroll, performance) should earn their slot or live
+inside an existing one.
 
 ### Home is not a dashboard
 
@@ -274,9 +282,16 @@ custom property are never out of sync by name.
 
 Honesty about scope matters more than a complete-looking spec:
 
-- **Payroll, attendance, performance, LMS, assets, documents** — no API
-  exists for these. The employee profile shows only real sections rather
-  than greyed-out panels promising features that don't exist.
+- **Payroll, performance, LMS, assets, documents** — no API exists for
+  these. The employee profile shows only real sections rather than
+  greyed-out panels promising features that don't exist.
+- **A holiday calendar.** Attendance has no notion of weekends or public
+  holidays, so an empty heatmap cell means "no punches" — a Sunday and a
+  no-show look identical. Said plainly under the heatmap rather than
+  implied away.
+- **Shifts, overtime rules, geofenced or biometric punching.** The ledger
+  supports them (a punch is just a timestamped event), but the policy and
+  hardware decisions behind them aren't made.
 - **Drag-to-move on the hiring board** — the API has `screen`/`advance`/
   `reject`, not a general "set stage". A board that silently fails to persist
   a drag is worse than one that doesn't offer it.

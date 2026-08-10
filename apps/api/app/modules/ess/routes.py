@@ -15,6 +15,7 @@ Anything that needs to name someone else belongs in hr_core or leave, behind
 employee.*/leave.* permissions.
 """
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -24,6 +25,9 @@ from app.core.auth.provider import Principal
 from app.core.db import get_db
 from app.core.rbac import current_user, require
 from app.core.tenant import resolve_tenant
+from app.modules.attendance import service as attendance_service
+from app.modules.attendance.models import AttendanceEvent
+from app.modules.attendance.schemas import DaySummaryOut, PunchIn
 from app.modules.ess.schemas import MyLeaveRequestIn
 from app.modules.hr_core.models import Employee
 from app.modules.hr_core.schemas import EmployeeOut
@@ -34,6 +38,7 @@ from app.modules.leave.schemas import LeaveBalanceOut, LeaveRequestOut
 router = APIRouter(prefix="/me", tags=["ess"])
 CAN_READ_SELF = [Depends(require("self.read"))]
 CAN_FILE_LEAVE = [Depends(require("self.leave.write"))]
+CAN_PUNCH = [Depends(require("self.attendance.write"))]
 
 
 def _me(db: Session, principal: Principal) -> Employee:
@@ -108,3 +113,71 @@ def file_my_leave(
         )
     except leave_service.InvalidDateRange as e:
         raise HTTPException(422, str(e)) from None
+
+
+# --- attendance -------------------------------------------------------------
+
+
+@router.post("/attendance/punch", response_model=DaySummaryOut, dependencies=CAN_PUNCH)
+def punch(
+    body: PunchIn,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
+    cid: str = Depends(resolve_tenant),
+):
+    """Record your own check-in/out. The timestamp is the SERVER's — accepting
+    a client-supplied time would make attendance self-reported, which is not
+    attendance. HR corrections go through /attendance/punch instead."""
+    me = _me(db, principal)
+    policy = attendance_service.get_policy(db, uuid.UUID(cid))
+    now = datetime.now(UTC)
+
+    # Reject the no-op rather than writing a punch that pairs with nothing:
+    # two check-ins in a row is almost always a double-tap.
+    current = attendance_service.today_for(db, me.id, policy, now=now)
+    if body.kind == "in" and current.open:
+        raise HTTPException(409, "you're already checked in")
+    if body.kind == "out" and not current.open:
+        raise HTTPException(409, "you're not checked in")
+
+    db.add(
+        AttendanceEvent(
+            company_id=uuid.UUID(cid), employee_id=me.id, kind=body.kind,
+            at=now, source="ess", note=body.note,
+        )
+    )
+    db.flush()
+    return attendance_service.today_for(db, me.id, policy, now=now)
+
+
+@router.get("/attendance/today", response_model=DaySummaryOut, dependencies=CAN_READ_SELF)
+def my_today(
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
+    cid: str = Depends(resolve_tenant),
+):
+    """Today's clock, with "today" decided by the COMPANY's timezone.
+
+    The browser must not compute this: its UTC date diverges from the
+    company-local date every evening in IST, which would show "not checked in"
+    to someone who is very much checked in."""
+    me = _me(db, principal)
+    policy = attendance_service.get_policy(db, uuid.UUID(cid))
+    return attendance_service.today_for(db, me.id, policy)
+
+
+@router.get("/attendance", response_model=list[DaySummaryOut], dependencies=CAN_READ_SELF)
+def my_attendance(
+    days: int = 14,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
+    cid: str = Depends(resolve_tenant),
+):
+    me = _me(db, principal)
+    policy = attendance_service.get_policy(db, uuid.UUID(cid))
+    days = max(1, min(days, 92))
+    tz = attendance_service.tz_of(policy)
+    today = attendance_service.local_date(datetime.now(UTC), tz)
+    return attendance_service.summaries_for(
+        db, me.id, policy, today - timedelta(days=days - 1), today
+    )

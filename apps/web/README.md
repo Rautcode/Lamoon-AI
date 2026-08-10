@@ -37,9 +37,12 @@ app/(workspace)/       authenticated shell: rail + palette + Lumo
   hiring/              pipeline board + candidate inspector
   people/ , people/[id]  directory + one intelligent page per person
   time/                leave, decisions first
+  attendance/          presence now + 14-day hours heatmap
   org/                 department tree
 components/lamoon/     the design system (primitives, rail, palette, Lumo)
-lib/lumo-brain.ts      Lumo's intent router — real data, not an LLM (DESIGN.md §2)
+lib/lumo-brain.ts      thin client for /assistant/ask — routing, tools and the
+                        model all live server-side now (DESIGN.md §2)
+lib/nav.ts             permission-derived nav: feeds the rail AND the guard
 lib/api.ts             typed fetch client — attaches JWT, retries once on 401
                         via /auth/refresh, then signs out if that also fails
 lib/auth-store.ts      zustand: tokens (localStorage) + role/permissions (memory)

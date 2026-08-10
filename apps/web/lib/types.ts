@@ -103,3 +103,37 @@ export type Application = {
   final_score: number | null;
   summary: string | null;
 };
+
+export type DaySummary = {
+  day: string;
+  first_in: string | null;
+  last_out: string | null;
+  worked_minutes: number;
+  open: boolean;
+  late: boolean;
+  short: boolean;
+  anomalies: string[];
+};
+
+export type Presence = {
+  employee_id: string;
+  full_name: string;
+  status: "in" | "out" | "absent";
+  first_in: string | null;
+  last_out: string | null;
+  worked_minutes: number;
+  late: boolean;
+};
+
+export type EmployeeAttendance = {
+  employee_id: string;
+  full_name: string;
+  days: DaySummary[];
+};
+
+export type AttendancePolicy = {
+  workday_start: string;
+  expected_minutes: number;
+  grace_minutes: number;
+  timezone: string;
+};
