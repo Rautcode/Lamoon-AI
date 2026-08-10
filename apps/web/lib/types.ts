@@ -13,6 +13,8 @@ export type Me = {
 
 export type Employee = {
   id: string;
+  /** Present once the person has a login (self-service access). */
+  user_id: string | null;
   full_name: string;
   email: string | null;
   department_id: string | null;

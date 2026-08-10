@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { landingFor, useAuthStore } from "@/lib/auth-store";
 import { Action } from "@/components/lamoon/primitives";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,7 +28,8 @@ export default function LoginPage() {
   });
 
   useEffect(() => {
-    if (accessToken) router.replace("/home");
+    // Already signed in — the workspace layout re-checks and routes by role.
+    if (accessToken) router.replace("/");
   }, [accessToken, router]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -40,7 +41,7 @@ export default function LoginPage() {
       setTokens(tokens.access_token, tokens.refresh_token);
       const me = await api.me();
       setProfile(me.role, me.permissions, me.company_id);
-      router.push("/home");
+      router.push(landingFor(me.permissions));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Login failed");
     } finally {

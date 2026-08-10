@@ -14,7 +14,11 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     # leave.write (filing a request on someone's behalf) stays HR-only until
     # there's a real ESS flow where employees file their own.
     "manager": frozenset({"ats.read", "employee.read", "leave.read", "leave.approve"}),
-    "employee": frozenset({"self.read"}),
+    # ESS. `self.*` grants access to /me/** only — those routes derive the
+    # employee from the JWT and never accept an id, so an employee physically
+    # cannot address anyone else's record. They deliberately have no
+    # employee.read: seeing the whole directory is not self-service.
+    "employee": frozenset({"self.read", "self.leave.write"}),
 }
 
 

@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { landingFor, useAuthStore } from "@/lib/auth-store";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -48,7 +48,7 @@ export default function OAuthCallbackPage() {
       .me()
       .then((me) => {
         setProfile(me.role, me.permissions, me.company_id);
-        router.replace("/home");
+        router.replace(landingFor(me.permissions));
       })
       .catch(() => setError("Signed in, but couldn't load your profile. Please try again."));
     // Runs once on mount — the redirect params are only meaningful the first time.

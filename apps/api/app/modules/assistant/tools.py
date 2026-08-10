@@ -360,6 +360,35 @@ SPECS: list[ToolSpec] = [
 ]
 
 
+# SECURITY: Lumo is a second door onto the same data, so it needs the same
+# locks as the routes. Without this an employee could ask "find Tier A
+# candidates" and read the whole pipeline that /ats/applications denies them.
+# Employees hold only `self.*`, so today they get NO tools and Lumo honestly
+# says it can't help — self-scoped tools ("my balance") are the follow-up.
+TOOL_PERMISSIONS: dict[str, str] = {
+    "headcount": "employee.read",
+    "who_is_on_leave": "leave.read",
+    "pending_leave_requests": "leave.read",
+    "find_candidates": "ats.read",
+    "open_roles": "ats.read",
+    "list_departments": "employee.read",
+    "find_person": "employee.read",
+}
+
+
+def allowed(permissions: frozenset[str], tool_name: str) -> bool:
+    needed = TOOL_PERMISSIONS.get(tool_name)
+    if needed is None:
+        return False  # unmapped tool = closed by default
+    return "*" in permissions or needed in permissions
+
+
+def specs_for(permissions: frozenset[str]) -> list[ToolSpec]:
+    """Only advertise tools the caller may actually use — the model can't ask
+    for what it can't see, which beats refusing after the fact."""
+    return [s for s in SPECS if allowed(permissions, s.name)]
+
+
 def run_tool(db: Session, name: str, args: dict) -> ToolResult:
     """Execute a tool by name. Unknown tools and bad arguments fail closed with
     a result the model can read, rather than raising into the request."""

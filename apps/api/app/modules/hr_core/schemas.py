@@ -31,6 +31,9 @@ class EmployeeIn(BaseModel):
 
 class EmployeeOut(BaseModel):
     id: uuid.UUID
+    #: Set once self-service access is granted. Lets the UI show "has access"
+    #: without a second call; it's an internal id, not a credential.
+    user_id: uuid.UUID | None = None
     full_name: str
     email: str | None
     department_id: uuid.UUID | None

@@ -85,6 +85,26 @@ export const api = {
     get: (id: string) => request<Employee>(`/hr/employees/${id}`),
     create: (body: NewEmployee) =>
       request<Employee>("/hr/employees", { method: "POST", body: JSON.stringify(body) }),
+    /** Provision a login so this person can use self-service. The temp
+     *  password is emailed to them and never returned here. */
+    invite: (id: string) =>
+      request<{ employee_id: string; user_id: string; invited: boolean }>(
+        `/hr/employees/${id}/invite`,
+        { method: "POST" }
+      ),
+  },
+  /** Employee Self-Service. None of these take an id — the server derives the
+   *  person from the JWT, which is the whole security model (see modules/ess). */
+  self: {
+    profile: () => request<Employee>("/me"),
+    balances: () => request<LeaveBalance[]>("/me/leave/balances"),
+    requests: () => request<LeaveRequest[]>("/me/leave/requests"),
+    fileLeave: (body: {
+      leave_type_id: string;
+      start_date: string;
+      end_date: string;
+      reason?: string;
+    }) => request<LeaveRequest>("/me/leave/requests", { method: "POST", body: JSON.stringify(body) }),
   },
   departments: {
     list: () => request<Department[]>("/hr/departments"),

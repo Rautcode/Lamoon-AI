@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.ai.provider import AIProvider, get_ai_provider
 from app.core.db import get_db
 from app.core.notify.base import Notifier, get_notifier
+from app.core.rbac import require
 from app.core.storage.base import checksum, get_blob_store
 from app.core.tenant import resolve_tenant
 from app.modules.ats import extract, interview_service, pipeline
@@ -21,8 +22,16 @@ from app.modules.auth.models import Company
 # ponytail: add dependencies=[Depends(require_module("ats"))] once entitlements are seeded.
 router = APIRouter(prefix="/ats", tags=["ats"])
 
+# SECURITY: these routes were authenticated but NOT permission-gated until ESS
+# landed. That was survivable while every login was admin/hr/manager; the
+# moment employees got logins it meant any employee could read the entire
+# candidate pipeline — names, emails, AI scores, resume summaries. Caught by
+# an adversarial ESS test (test_employee_cannot_reach_hiring_or_lumo_tools).
+CAN_READ = [Depends(require("ats.read"))]
+CAN_WRITE = [Depends(require("ats.write"))]
 
-@router.post("/jobs")
+
+@router.post("/jobs", dependencies=CAN_WRITE)
 def create_job(body: JobIn, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)):
     job = JobOpening(company_id=uuid.UUID(cid), **body.model_dump())
     db.add(job)
@@ -30,13 +39,16 @@ def create_job(body: JobIn, db: Session = Depends(get_db), cid: str = Depends(re
     return {"id": job.id, "title": job.title, "status": job.status}
 
 
-@router.get("/jobs")
+@router.get("/jobs", dependencies=CAN_READ)
 def list_jobs(db: Session = Depends(get_db)):
     rows = db.scalars(select(JobOpening).where(JobOpening.deleted_at.is_(None))).all()
     return [{"id": j.id, "title": j.title, "status": j.status} for j in rows]
 
 
-@router.post("/apply", status_code=202)
+# ponytail: JWT-gated, so this is an internal/service-account intake, not a
+# public careers page. A genuinely public front door belongs behind the
+# /public prefix with its own token, like interview booking.
+@router.post("/apply", status_code=202, dependencies=CAN_WRITE)
 async def apply(
     file: UploadFile = File(...),
     job_id: uuid.UUID | None = Form(None),
@@ -163,13 +175,15 @@ def _enrich(db: Session, apps: list[Application]) -> list[ApplicationOut]:
     return out
 
 
-@router.get("/applications", response_model=list[ApplicationOut])
+@router.get("/applications", response_model=list[ApplicationOut], dependencies=CAN_READ)
 def list_applications(db: Session = Depends(get_db)):
     rows = list(db.scalars(select(Application).where(Application.deleted_at.is_(None))).all())
     return _enrich(db, rows)
 
 
-@router.get("/applications/{application_id}", response_model=ApplicationOut)
+@router.get(
+    "/applications/{application_id}", response_model=ApplicationOut, dependencies=CAN_READ
+)
 def get_application(application_id: uuid.UUID, db: Session = Depends(get_db)):
     app = db.get(Application, application_id)
     if app is None:
@@ -177,7 +191,10 @@ def get_application(application_id: uuid.UUID, db: Session = Depends(get_db)):
     return _enrich(db, [app])[0]
 
 
-@router.post("/applications/{application_id}/screen", response_model=ApplicationOut)
+@router.post(
+    "/applications/{application_id}/screen", response_model=ApplicationOut,
+    dependencies=CAN_WRITE,
+)
 async def screen(
     application_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -193,7 +210,8 @@ async def screen(
 
 
 @router.post(
-    "/applications/{application_id}/interview-slots", response_model=ProposeSlotsOut
+    "/applications/{application_id}/interview-slots", response_model=ProposeSlotsOut,
+    dependencies=CAN_WRITE,
 )
 async def propose_interview_slots(
     application_id: uuid.UUID,

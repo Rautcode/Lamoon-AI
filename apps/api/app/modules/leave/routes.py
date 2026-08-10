@@ -54,26 +54,21 @@ def get_balances(employee_id: uuid.UUID, db: Session = Depends(get_db)):
 def create_leave_request(
     body: LeaveRequestIn, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
 ):
-    if body.end_date < body.start_date:
-        raise HTTPException(422, "end_date must not be before start_date")
-    days = (body.end_date - body.start_date).days + 1  # inclusive calendar days, see service.py
-    req = LeaveRequest(
-        company_id=uuid.UUID(cid),
-        employee_id=body.employee_id,
-        leave_type_id=body.leave_type_id,
-        start_date=body.start_date,
-        end_date=body.end_date,
-        days=days,
-        reason=body.reason,
-        status="pending",
-    )
-    db.add(req)
-    db.flush()
-    audit.record(
-        db, company_id=uuid.UUID(cid), entity="leave_request", entity_id=req.id, action="requested",
-        payload={"days": days},
-    )
-    return req
+    """HR files on someone's behalf. An employee filing their OWN leave uses
+    /me/leave/requests, which shares create_request() below."""
+    try:
+        return leave_service.create_request(
+            db,
+            company_id=uuid.UUID(cid),
+            employee_id=body.employee_id,
+            leave_type_id=body.leave_type_id,
+            start_date=body.start_date,
+            end_date=body.end_date,
+            reason=body.reason,
+            source="hr",
+        )
+    except leave_service.InvalidDateRange as e:
+        raise HTTPException(422, str(e)) from None
 
 
 @router.get("/requests", response_model=list[LeaveRequestOut], dependencies=CAN_READ)

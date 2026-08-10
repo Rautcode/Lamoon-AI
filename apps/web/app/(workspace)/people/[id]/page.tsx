@@ -1,12 +1,13 @@
 "use client";
 import { use } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { hasPermission, useAuthStore } from "@/lib/auth-store";
 import { askLumoGlobally } from "@/components/lamoon/command-palette";
 import { LumoMark } from "@/components/lamoon/lumo";
-import { Avatar, Empty, Pill, SectionLabel, Status } from "@/components/lamoon/primitives";
+import { Action, Avatar, Empty, Pill, SectionLabel, Status } from "@/components/lamoon/primitives";
 
 /* One intelligent page per person.
 
@@ -58,6 +59,14 @@ function BalanceRing({ used, allocated, label }: { used: number; allocated: numb
 
 export default function PersonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const queryClient = useQueryClient();
+  const permissions = useAuthStore((s) => s.permissions);
+  const canWrite = hasPermission(permissions, "employee.write");
+
+  const invite = useMutation({
+    mutationFn: () => api.employees.invite(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["employee", id] }),
+  });
 
   const { data: person, isLoading, isError } = useQuery({
     queryKey: ["employee", id],
@@ -166,8 +175,40 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
         )}
       </section>
 
+      {/* --- Self-service access -------------------------------------------- */}
+      {canWrite && (
+        <section style={{ "--i": 5 } as React.CSSProperties} className="mt-12">
+          <SectionLabel>Self-service access</SectionLabel>
+          {invite.isSuccess || person.user_id ? (
+            <p className="t-meta">
+              {person.full_name.split(" ")[0]} can sign in and manage their own time off.
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <Action
+                variant="quiet"
+                onClick={() => invite.mutate()}
+                disabled={invite.isPending || !person.email}
+              >
+                {invite.isPending ? "Sending…" : "Give access"}
+              </Action>
+              <p className="t-meta">
+                {person.email
+                  ? "Emails them a temporary password to sign in with."
+                  : "Add an email address first."}
+              </p>
+            </div>
+          )}
+          {invite.isError && (
+            <p className="mt-2 text-[0.8125rem] text-[var(--critical)]">
+              {invite.error instanceof ApiError ? invite.error.message : "Could not grant access."}
+            </p>
+          )}
+        </section>
+      )}
+
       {/* --- Lumo ----------------------------------------------------------- */}
-      <section style={{ "--i": 5 } as React.CSSProperties} className="mt-12">
+      <section style={{ "--i": 6 } as React.CSSProperties} className="mt-12">
         <button
           onClick={() => askLumoGlobally(`Tell me about ${person.full_name}`)}
           className="flex w-full items-center gap-3 rounded-[14px] bg-[var(--surface-1)] px-4 py-3.5

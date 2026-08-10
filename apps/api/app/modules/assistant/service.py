@@ -83,8 +83,11 @@ def _route(question: str) -> tuple[str, dict] | None:
     return ("find_person", {"name": question})
 
 
-def _fallback(db: Session, question: str) -> Answer:
+def _fallback(db: Session, question: str, permissions: frozenset[str]) -> Answer:
     route = _route(question)
+    # Re-check here too: the fallback picks tools directly, without the model.
+    if route is not None and not tools.allowed(permissions, route[0]):
+        route = None
     if route is None:
         return Answer(
             text="I can't answer that one yet. Here's what I can do today:",
@@ -102,20 +105,34 @@ def _fallback(db: Session, question: str) -> Answer:
     return Answer(text=result.text, items=result.items)
 
 
-async def ask(db: Session, question: str, provider: AIProvider | None = None) -> Answer:
+async def ask(
+    db: Session,
+    question: str,
+    provider: AIProvider | None = None,
+    permissions: frozenset[str] = frozenset(),
+) -> Answer:
     question = (question or "").strip()
     if not question:
         return Answer(text="Ask me anything about your people, hiring, or time off.")
 
+    # Tools are filtered to what this caller may read — Lumo must not become a
+    # side door around the route-level permissions.
+    available = tools.specs_for(permissions)
+    if not available:
+        return Answer(
+            text="I can't look that up for your account yet.",
+            items=[], unmatched=True,
+        )
+
     if not get_settings().gemini_api_key or provider is None:
-        return _fallback(db, question)
+        return _fallback(db, question, permissions)
 
     messages: list[dict] = [{"role": "user", "text": question}]
     collected: list[dict] = []
 
     try:
         for _ in range(MAX_STEPS):
-            turn = await provider.converse(system=SYSTEM, messages=messages, tools=tools.SPECS)
+            turn = await provider.converse(system=SYSTEM, messages=messages, tools=available)
 
             if not turn.tool_calls:
                 text = (turn.text or "").strip()
@@ -131,6 +148,16 @@ async def ask(db: Session, question: str, provider: AIProvider | None = None) ->
                 }
             )
             for call in turn.tool_calls:
+                # Defence in depth: a model asking for an unadvertised tool is
+                # refused rather than executed.
+                if not tools.allowed(permissions, call.name):
+                    messages.append(
+                        {
+                            "role": "tool", "name": call.name,
+                            "result": {"error": "not permitted for this user"},
+                        }
+                    )
+                    continue
                 result = tools.run_tool(db, call.name, call.args)
                 # Items come from the tool, never from the model — this is what
                 # makes a hallucinated name impossible to click.
@@ -140,4 +167,4 @@ async def ask(db: Session, question: str, provider: AIProvider | None = None) ->
         # Network blip, bad key, SDK change — the product should still answer.
         logger.exception("Lumo model path failed; using keyword fallback")
 
-    return _fallback(db, question)
+    return _fallback(db, question, permissions)

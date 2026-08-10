@@ -1,0 +1,14 @@
+Subject: Your {company_name} account is ready
+
+Hi {full_name},
+
+You can now sign in to {company_name} to view your leave balance and request
+time off.
+
+  Workspace: {subdomain}
+  Email:     {email}
+  Password:  {temp_password}
+
+Please change your password after your first sign-in.
+
+— {company_name}

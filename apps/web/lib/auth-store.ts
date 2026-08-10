@@ -49,3 +49,9 @@ export const useAuthStore = create<AuthState>((set) => ({
 export function hasPermission(permissions: string[], needed: string): boolean {
   return permissions.includes("*") || permissions.includes(needed);
 }
+
+/** Where this account belongs after sign-in. Employees hold only `self.*`, so
+ *  every query on /home would 403 for them — they land on /me instead. */
+export function landingFor(permissions: string[]): string {
+  return hasPermission(permissions, "employee.read") ? "/home" : "/me";
+}

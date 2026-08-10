@@ -1,18 +1,29 @@
 "use client";
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { landingFor, useAuthStore } from "@/lib/auth-store";
+import { canOpen } from "@/lib/nav";
 import { Rail } from "@/components/lamoon/rail";
 import { CommandPalette } from "@/components/lamoon/command-palette";
 import { Lumo } from "@/components/lamoon/lumo";
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const accessToken = useAuthStore((s) => s.accessToken);
   const role = useAuthStore((s) => s.role);
+  const permissions = useAuthStore((s) => s.permissions);
   const setProfile = useAuthStore((s) => s.setProfile);
   const clear = useAuthStore((s) => s.clear);
+
+  // Send people to a page their role can actually use. Convenience, not
+  // security — the API enforces permissions regardless of what's routed here.
+  useEffect(() => {
+    if (role && !canOpen(permissions, pathname)) {
+      router.replace(landingFor(permissions));
+    }
+  }, [role, permissions, pathname, router]);
 
   useEffect(() => {
     if (!accessToken) {

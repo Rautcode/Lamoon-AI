@@ -2,9 +2,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSyncExternalStore } from "react";
-import { CalendarDays, Home, Moon, Network, Sun, Users, Briefcase, LogOut } from "lucide-react";
+import { LogOut, Moon, Sun } from "lucide-react";
 import { api } from "@/lib/api";
-import { useAuthStore } from "@/lib/auth-store";
+import { landingFor, useAuthStore } from "@/lib/auth-store";
+import { navFor } from "@/lib/nav";
 import { Avatar, Kbd } from "@/components/lamoon/primitives";
 
 /* Adaptive navigation.
@@ -15,13 +16,6 @@ import { Avatar, Kbd } from "@/components/lamoon/primitives";
    product is trying not to inherit. On mobile it becomes a bottom bar, where
    thumbs are. */
 
-const ITEMS = [
-  { href: "/home", label: "Home", Icon: Home },
-  { href: "/hiring", label: "Hiring", Icon: Briefcase },
-  { href: "/people", label: "People", Icon: Users },
-  { href: "/time", label: "Time", Icon: CalendarDays },
-  { href: "/org", label: "Org", Icon: Network },
-];
 
 /* The theme lives on <html>, set pre-paint in app/layout.tsx — i.e. it's
    external mutable state, not React state. useSyncExternalStore is the right
@@ -69,6 +63,8 @@ export function Rail() {
   const pathname = usePathname();
   const router = useRouter();
   const role = useAuthStore((s) => s.role);
+  const permissions = useAuthStore((s) => s.permissions);
+  const items = navFor(permissions);
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
   return (
@@ -83,14 +79,14 @@ export function Rail() {
       >
         <div className="flex w-full flex-col items-center gap-1">
           <Link
-            href="/home"
+            href={landingFor(permissions)}
             className="mb-4 grid h-9 w-full place-items-center group-hover:justify-items-start group-hover:pl-4"
             aria-label="Lamoon home"
           >
             <span className="lumo-ring size-[18px] rounded-[6px]" />
           </Link>
 
-          {ITEMS.map(({ href, label, Icon }) => (
+          {items.map(({ href, label, Icon }) => (
             <Link
               key={href}
               href={href}
@@ -150,7 +146,7 @@ export function Rail() {
                    shadow-[0_-1px_0_var(--hairline)] sm:hidden"
         aria-label="Main"
       >
-        {ITEMS.map(({ href, label, Icon }) => (
+        {items.map(({ href, label, Icon }) => (
           <Link
             key={href}
             href={href}
