@@ -9,6 +9,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "ats.read", "ats.write", "employee.read", "employee.write",
             "leave.read", "leave.write", "leave.approve",
             "attendance.read", "attendance.write",
+            "calendar.write",
         }
     ),
     # manager approves their team's leave but doesn't administer HR data —

@@ -8,7 +8,8 @@ Redis/Celery, with a Next.js frontend. See [`ARCHITECTURE.md`](ARCHITECTURE.md),
 ## Status
 **V1+ feature-complete**: multi-tenant auth (JWT + RBAC + OAuth + revocation),
 seat-limit enforcement, employee directory + departments, leave management
-(configurable types, request/approve workflow, derived balances), attendance
+(configurable types, request/approve workflow, derived balances, billed in
+WORKING days against a configurable work week + holiday calendar), attendance
 (timezone-aware punch ledger, presence, hours heatmap), employee self-service, and the
 full AI ATS flow — resume intake → Gemini screening → ranking → email
 automation → self-service interview scheduling with reminders. **Lumo**, the

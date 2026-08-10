@@ -32,6 +32,8 @@ export default function TimePage() {
   const [composing, setComposing] = useState(false);
   const [configuring, setConfiguring] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [holidayDay, setHolidayDay] = useState("");
+  const [holidayName, setHolidayName] = useState("");
 
   const { data: employees } = useQuery({ queryKey: ["employees"], queryFn: () => api.employees.list() });
   const { data: types } = useQuery({ queryKey: ["leave-types"], queryFn: api.leave.types.list });
@@ -39,6 +41,34 @@ export default function TimePage() {
     queryKey: ["leave-requests"],
     queryFn: api.leave.requests.list,
   });
+  const { data: holidays } = useQuery({ queryKey: ["holidays"], queryFn: api.calendar.holidays });
+  const { data: workWeek } = useQuery({ queryKey: ["work-week"], queryFn: api.calendar.workWeek });
+
+  const addHoliday = useMutation({
+    mutationFn: () => api.calendar.addHoliday(holidayDay, holidayName),
+    onSuccess: () => {
+      setHolidayDay("");
+      setHolidayName("");
+      queryClient.invalidateQueries({ queryKey: ["holidays"] });
+    },
+    onError: () => setError("Could not add that holiday."),
+  });
+  const removeHoliday = useMutation({
+    mutationFn: (id: string) => api.calendar.removeHoliday(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["holidays"] }),
+  });
+  const setWorkWeek = useMutation({
+    mutationFn: (pattern: string) => api.calendar.setWorkWeek(pattern),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["work-week"] }),
+  });
+
+  function toggleWorkDay(index: number) {
+    const current = workWeek?.working_days ?? "1111100";
+    const next = current.split("");
+    next[index] = next[index] === "1" ? "0" : "1";
+    if (!next.includes("1")) return; // a company must work at least one day
+    setWorkWeek.mutate(next.join(""));
+  }
 
   const nameOf = (id: string) => employees?.find((e) => e.id === id)?.full_name ?? "Someone";
   const typeOf = (id: string) => types?.find((t) => t.id === id)?.name ?? "Leave";
@@ -177,6 +207,95 @@ export default function TimePage() {
             </div>
           )}
         </form>
+      )}
+
+      {/* Leave is billed in WORKING days, so this panel decides what every
+          future request actually costs. */}
+      {configuring && canWrite && (
+        <div className="surface-raised pop mb-8 space-y-7 p-5">
+          <div>
+            <SectionLabel>Working week</SectionLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label, i) => {
+                const on = (workWeek?.working_days ?? "1111100")[i] === "1";
+                return (
+                  <button
+                    key={label}
+                    onClick={() => toggleWorkDay(i)}
+                    disabled={setWorkWeek.isPending}
+                    aria-pressed={on}
+                    className={`rounded-[9px] px-3 py-1.5 text-[0.8125rem] transition-colors ${
+                      on
+                        ? "bg-[var(--ink-1)] text-[var(--surface-0)]"
+                        : "bg-[var(--surface-2)] text-[var(--ink-3)]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 t-meta">
+              Non-working days aren&apos;t charged against leave balances.
+            </p>
+          </div>
+
+          <div>
+            <SectionLabel>Holidays</SectionLabel>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (holidayDay && holidayName) addHoliday.mutate();
+              }}
+              className="flex flex-wrap items-end gap-3"
+            >
+              <div className="space-y-1.5">
+                <Label htmlFor="hday" className="t-micro">
+                  Date
+                </Label>
+                <Input
+                  id="hday"
+                  type="date"
+                  value={holidayDay}
+                  onChange={(e) => setHolidayDay(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="hname" className="t-micro">
+                  Name
+                </Label>
+                <Input
+                  id="hname"
+                  value={holidayName}
+                  onChange={(e) => setHolidayName(e.target.value)}
+                  placeholder="Diwali"
+                />
+              </div>
+              <Action type="submit" disabled={addHoliday.isPending}>
+                Add holiday
+              </Action>
+            </form>
+            {holidays && holidays.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {holidays.map((h) => (
+                  <button
+                    key={h.id}
+                    onClick={() => removeHoliday.mutate(h.id)}
+                    title="Remove"
+                    className="group inline-flex items-center gap-2 rounded-full bg-[var(--surface-2)]
+                               px-2.5 py-1 text-[0.75rem] text-[var(--ink-2)]
+                               transition-colors hover:bg-[var(--surface-3)]"
+                  >
+                    {h.name} · {h.day}
+                    <span className="text-[var(--ink-4)] group-hover:text-[var(--critical)]">×</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 t-meta">No holidays yet.</p>
+            )}
+          </div>
+        </div>
       )}
 
       {composing && canWrite && (

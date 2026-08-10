@@ -137,3 +137,14 @@ export type AttendancePolicy = {
   grace_minutes: number;
   timezone: string;
 };
+
+export type Holiday = {
+  id: string;
+  day: string;
+  name: string;
+};
+
+export type WorkWeek = {
+  /** Monday-first, seven chars, "1" = worked. */
+  working_days: string;
+};

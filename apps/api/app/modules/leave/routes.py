@@ -67,7 +67,7 @@ def create_leave_request(
             reason=body.reason,
             source="hr",
         )
-    except leave_service.InvalidDateRange as e:
+    except (leave_service.InvalidDateRange, leave_service.NoWorkingDays) as e:
         raise HTTPException(422, str(e)) from None
 
 

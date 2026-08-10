@@ -24,6 +24,20 @@ def _db_up() -> bool:
 pytestmark = pytest.mark.skipif(not _db_up(), reason="Postgres not reachable")
 
 
+def workweek_start() -> date:
+    """The next Monday.
+
+    Leave is billed in WORKING days now, so a test that says `date.today()`
+    plus 3 days asserts a different number depending on which weekday the
+    suite happens to run. Anchoring on a Monday keeps 1–5 day ranges entirely
+    within the work week."""
+    d = date.today() + timedelta(days=1)
+    while d.weekday() != 0:
+        d += timedelta(days=1)
+    return d
+
+
+
 @pytest.fixture
 def company(client):
     sub = f"leave-{uuid.uuid4().hex[:8]}"
@@ -77,7 +91,7 @@ def test_leave_type_crud(client, company):
 def test_leave_request_days_computed_and_pending_by_default(client, company):
     headers, emp_id = company["headers"], company["employee_id"]
     lt = _make_type(client, headers, "Sick", 10)
-    req = _make_request(client, headers, emp_id, lt["id"], date.today(), 3)
+    req = _make_request(client, headers, emp_id, lt["id"], workweek_start(), 3)
     assert req["days"] == 3
     assert req["status"] == "pending"
 
@@ -85,7 +99,7 @@ def test_leave_request_days_computed_and_pending_by_default(client, company):
 def test_pending_request_does_not_affect_balance(client, company):
     headers, emp_id = company["headers"], company["employee_id"]
     lt = _make_type(client, headers, "Sick", 10)
-    _make_request(client, headers, emp_id, lt["id"], date.today(), 3)
+    _make_request(client, headers, emp_id, lt["id"], workweek_start(), 3)
 
     bal = client.get(f"/api/v1/leave/balances/{emp_id}", headers=headers).json()
     sick = next(b for b in bal if b["leave_type_name"] == "Sick")
@@ -96,7 +110,7 @@ def test_pending_request_does_not_affect_balance(client, company):
 def test_approve_updates_balance_and_is_single_use(client, company):
     headers, emp_id = company["headers"], company["employee_id"]
     lt = _make_type(client, headers, "Sick", 10)
-    req = _make_request(client, headers, emp_id, lt["id"], date.today(), 3)
+    req = _make_request(client, headers, emp_id, lt["id"], workweek_start(), 3)
 
     r = client.post(f"/api/v1/leave/requests/{req['id']}/approve", headers=headers)
     assert r.status_code == 200, r.text
@@ -115,7 +129,7 @@ def test_approve_updates_balance_and_is_single_use(client, company):
 def test_reject_does_not_affect_balance(client, company):
     headers, emp_id = company["headers"], company["employee_id"]
     lt = _make_type(client, headers, "Casual", 7)
-    req = _make_request(client, headers, emp_id, lt["id"], date.today(), 1)
+    req = _make_request(client, headers, emp_id, lt["id"], workweek_start(), 1)
 
     r = client.post(f"/api/v1/leave/requests/{req['id']}/reject", headers=headers)
     assert r.status_code == 200
@@ -131,8 +145,10 @@ def test_approval_exceeding_balance_is_rejected(client, company):
     headers, emp_id = company["headers"], company["employee_id"]
     lt = _make_type(client, headers, "Comp Off", 2)
 
-    req1 = _make_request(client, headers, emp_id, lt["id"], date.today(), 2)  # uses the full quota
-    req2 = _make_request(client, headers, emp_id, lt["id"], date.today() + timedelta(days=30), 2)
+    start = workweek_start()
+    req1 = _make_request(client, headers, emp_id, lt["id"], start, 2)  # uses the full quota
+    # +28d keeps it a Monday, so both ranges are all-weekday whatever day this runs.
+    req2 = _make_request(client, headers, emp_id, lt["id"], start + timedelta(days=28), 2)
 
     r1 = client.post(f"/api/v1/leave/requests/{req1['id']}/approve", headers=headers)
     assert r1.status_code == 200
@@ -144,7 +160,7 @@ def test_approval_exceeding_balance_is_rejected(client, company):
 def test_end_before_start_is_rejected(client, company):
     headers, emp_id = company["headers"], company["employee_id"]
     lt = _make_type(client, headers, "Marriage", 3)
-    start = date.today()
+    start = workweek_start()
     r = client.post(
         "/api/v1/leave/requests",
         json={
@@ -193,12 +209,12 @@ def test_manager_can_approve_but_not_create(client, company):
         "/api/v1/leave/requests",
         json={
             "employee_id": emp_id, "leave_type_id": lt["id"],
-            "start_date": str(date.today()), "end_date": str(date.today()),
+            "start_date": str(workweek_start()), "end_date": str(workweek_start()),
         },
         headers=mgr_headers,
     )
     assert r.status_code == 403  # manager has no leave.write
 
-    req = _make_request(client, headers, emp_id, lt["id"], date.today(), 1)  # HR files it
+    req = _make_request(client, headers, emp_id, lt["id"], workweek_start(), 1)  # HR files it
     r = client.post(f"/api/v1/leave/requests/{req['id']}/approve", headers=mgr_headers)
     assert r.status_code == 200  # manager DOES have leave.approve

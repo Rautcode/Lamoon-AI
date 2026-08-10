@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.modules.audit import service as audit
 from app.modules.leave.models import LeaveRequest, LeaveType
 from app.modules.leave.schemas import LeaveBalanceOut
+from app.modules.work_calendar import service as work_calendar
 
 # ponytail: calendar year (Jan-Dec), not a configurable fiscal year. A request
 # straddling Dec 31/Jan 1 is counted by its start_date's year only. Both are
@@ -56,6 +57,10 @@ class InvalidDateRange(ValueError):
     """end_date before start_date. Routes map this to a 422."""
 
 
+class NoWorkingDays(ValueError):
+    """The whole range is weekend/holiday. Routes map this to a 422."""
+
+
 def create_request(
     db: Session,
     *,
@@ -78,7 +83,13 @@ def create_request(
     if end_date < start_date:
         raise InvalidDateRange("end_date must not be before start_date")
 
-    days = (end_date - start_date).days + 1  # inclusive calendar days
+    # Billed in WORKING days. Counting calendar days (what this did before)
+    # charged 4 days for a Friday-to-Monday absence — real balance taken off
+    # people for days they were never going to work.
+    days, holidays = work_calendar.billable_days(db, company_id, start_date, end_date)
+    if days == 0:
+        raise NoWorkingDays("that range contains no working days")
+
     req = LeaveRequest(
         company_id=company_id,
         employee_id=employee_id,
@@ -93,6 +104,11 @@ def create_request(
     db.flush()
     audit.record(
         db, company_id=company_id, entity="leave_request", entity_id=req.id,
-        action="requested", source=source, payload={"days": days},
+        action="requested", source=source,
+        payload={
+            "days": days,
+            "calendar_days": (end_date - start_date).days + 1,
+            "holidays_excluded": [d.isoformat() for d in holidays],
+        },
     )
     return req

@@ -28,6 +28,8 @@ class DaySummaryOut(BaseModel):
     late: bool
     short: bool
     anomalies: list[str] = []
+    working_day: bool = True
+    holiday: str | None = None
 
     # service.DaySummary is a dataclass. FastAPI coerces it when it's the
     # response_model, but NOT when it's nested inside another model built by

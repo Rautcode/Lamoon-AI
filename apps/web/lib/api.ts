@@ -6,6 +6,7 @@ import type {
   Department,
   Employee,
   EmployeeAttendance,
+  Holiday,
   Job,
   LeaveBalance,
   LeaveRequest,
@@ -13,6 +14,7 @@ import type {
   Me,
   NewDepartment,
   Presence,
+  WorkWeek,
   NewEmployee,
   NewLeaveRequest,
   NewLeaveType,
@@ -152,6 +154,25 @@ export const api = {
         unmatched: boolean;
         model_used: boolean;
       }>("/assistant/ask", { method: "POST", body: JSON.stringify({ question }) }),
+  },
+  calendar: {
+    /** Readable by anyone with a login — everyone needs to know when the
+     *  office is shut. Writing needs calendar.write (HR/admin) because it
+     *  re-bills every future leave request. */
+    holidays: () => request<Holiday[]>("/calendar/holidays"),
+    addHoliday: (day: string, name: string) =>
+      request<Holiday>("/calendar/holidays", {
+        method: "POST",
+        body: JSON.stringify({ day, name }),
+      }),
+    removeHoliday: (id: string) =>
+      request<void>(`/calendar/holidays/${id}`, { method: "DELETE" }),
+    workWeek: () => request<WorkWeek>("/calendar/work-week"),
+    setWorkWeek: (working_days: string) =>
+      request<WorkWeek>("/calendar/work-week", {
+        method: "PUT",
+        body: JSON.stringify({ working_days }),
+      }),
   },
   attendance: {
     today: () => request<Presence[]>("/attendance/today"),

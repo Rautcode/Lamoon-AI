@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.attendance.models import AttendanceEvent, AttendancePolicy
+from app.modules.work_calendar import service as work_calendar
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,10 @@ class DaySummary:
     short: bool = False
     #: Punches that couldn't be paired (e.g. an "out" with no preceding "in").
     anomalies: list[str] = field(default_factory=list)
+    #: False for weekends and holidays. Without this an empty cell in the
+    #: heatmap can't distinguish a Sunday from a no-show.
+    working_day: bool = True
+    holiday: str | None = None
 
 
 def tz_of(policy: AttendancePolicy) -> ZoneInfo:
@@ -136,9 +141,10 @@ def summaries_for(
     now: datetime | None = None,
 ) -> list[DaySummary]:
     """Day summaries for one employee across an inclusive local-date range.
-    Days with no punches are omitted — absence is the caller's to interpret
-    (a weekend and a no-show look identical here, and this module has no
-    holiday calendar to tell them apart)."""
+
+    Days with no punches are omitted; each returned day carries `working_day`
+    and `holiday` from the company work calendar, so a caller can tell a
+    Sunday or Diwali apart from someone who simply didn't show up."""
     tz = tz_of(policy)
     # Widen the UTC window by a day either side: a local day can start before
     # and end after its UTC namesake.
@@ -162,9 +168,15 @@ def summaries_for(
         if start <= d <= end:
             by_day.setdefault(d, []).append(Punch(kind=r.kind, at=r.at))
 
-    return [
-        pair_events(
-            punches,
+    # Annotate against the company work calendar so callers can tell a weekend
+    # or a public holiday apart from someone simply not showing up.
+    cal = work_calendar.get_calendar(db, policy.company_id)
+    holidays = work_calendar.holidays_between(db, start, end)
+
+    out: list[DaySummary] = []
+    for d in sorted(by_day):
+        summary = pair_events(
+            by_day[d],
             day=d,
             tz=tz,
             workday_start=policy.workday_start,
@@ -172,8 +184,16 @@ def summaries_for(
             grace_minutes=policy.grace_minutes,
             now=now,
         )
-        for d, punches in sorted(by_day.items())
-    ]
+        summary.holiday = holidays.get(d)
+        summary.working_day = (
+            work_calendar.is_working_weekday(d, cal.working_days) and summary.holiday is None
+        )
+        # Not working that day means not "short" — you weren't expected in.
+        if not summary.working_day:
+            summary.short = False
+            summary.late = False
+        out.append(summary)
+    return out
 
 
 def today_for(

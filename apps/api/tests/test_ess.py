@@ -27,6 +27,20 @@ def _db_up() -> bool:
 pytestmark = pytest.mark.skipif(not _db_up(), reason="Postgres not reachable")
 
 
+def workweek_start() -> date:
+    """The next Monday.
+
+    Leave is billed in WORKING days now, so a test that says `date.today()`
+    plus 3 days asserts a different number depending on which weekday the
+    suite happens to run. Anchoring on a Monday keeps 1–5 day ranges entirely
+    within the work week."""
+    d = date.today() + timedelta(days=1)
+    while d.weekday() != 0:
+        d += timedelta(days=1)
+    return d
+
+
+
 @pytest.fixture
 def org(client):
     """A company with HR, two employees, and a leave type. Only Asha gets a
@@ -145,8 +159,8 @@ def test_employee_cannot_approve_leave(client, org):
         "/api/v1/me/leave/requests",
         json={
             "leave_type_id": org["leave_type"]["id"],
-            "start_date": str(date.today()),
-            "end_date": str(date.today()),
+            "start_date": str(workweek_start()),
+            "end_date": str(workweek_start()),
         },
         headers=org["emp_headers"],
     ).json()
@@ -194,7 +208,7 @@ def test_my_profile_is_my_own_record(client, org):
 
 
 def test_file_own_leave_and_see_it(client, org):
-    today = date.today()
+    today = workweek_start()
     r = client.post(
         "/api/v1/me/leave/requests",
         json={
@@ -218,7 +232,7 @@ def test_file_own_leave_and_see_it(client, org):
 
 def test_my_requests_never_include_other_people(client, org):
     """HR files leave for Ben; Asha must not see it in her own list."""
-    today = date.today()
+    today = workweek_start()
     client.post(
         "/api/v1/leave/requests",
         json={
@@ -238,7 +252,7 @@ def test_my_balance_reflects_only_my_approved_leave(client, org):
     annual = next(b for b in balances if b["leave_type_name"] == "Annual")
     assert annual["used"] == 0 and annual["remaining"] == 12
 
-    today = date.today()
+    today = workweek_start()
     filed = client.post(
         "/api/v1/me/leave/requests",
         json={
@@ -259,7 +273,7 @@ def test_my_balance_reflects_only_my_approved_leave(client, org):
 
 
 def test_bad_date_range_rejected_for_ess_too(client, org):
-    today = date.today()
+    today = workweek_start()
     r = client.post(
         "/api/v1/me/leave/requests",
         json={

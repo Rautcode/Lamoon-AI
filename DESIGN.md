@@ -89,6 +89,7 @@ lookup. The loop is bounded to 3 steps so a confused model can't spin.
     /people/[id]           One intelligent page per person
     /time                  Leave — decisions first, then history
     /attendance            Presence now + a 14-day hours heatmap
+                             (weekends/holidays marked, not blank)
     /org                   Department tree + unassigned people
 ```
 
@@ -285,10 +286,6 @@ Honesty about scope matters more than a complete-looking spec:
 - **Payroll, performance, LMS, assets, documents** — no API exists for
   these. The employee profile shows only real sections rather than
   greyed-out panels promising features that don't exist.
-- **A holiday calendar.** Attendance has no notion of weekends or public
-  holidays, so an empty heatmap cell means "no punches" — a Sunday and a
-  no-show look identical. Said plainly under the heatmap rather than
-  implied away.
 - **Shifts, overtime rules, geofenced or biometric punching.** The ledger
   supports them (a punch is just a timestamped event), but the policy and
   hardware decisions behind them aren't made.
@@ -296,8 +293,9 @@ Honesty about scope matters more than a complete-looking spec:
   `reject`, not a general "set stage". A board that silently fails to persist
   a drag is worse than one that doesn't offer it.
 - **Analytics / charts** — deferred rather than faked with sample data.
-- **Employee self-service** — employees can't yet file their own leave; HR
-  files on their behalf. Needs an ESS role and flow.
+- **Half-days and leave beyond whole working days.** Leave is billed in whole
+  working days against the work week and holiday calendar. A half-day, or a
+  holiday that applies to one location but not another, isn't modelled.
 - **Lumo write actions** — it reads, it doesn't act. "Approve Asha's leave"
   is not wired, and shouldn't be until there's a confirmation step: a model
   that can mutate HR records on a misparse is a different risk class than one
