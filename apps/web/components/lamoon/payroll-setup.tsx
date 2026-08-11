@@ -145,7 +145,7 @@ function PayComponents() {
   });
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
-  const [pfWage, setPfWage] = useState(false);
+  const [wageBasis, setWageBasis] = useState<"wages" | "excluded" | "outside">("excluded");
   const [kind, setKind] = useState<"earning" | "deduction">("earning");
   const [error, setError] = useState<string | null>(null);
 
@@ -155,7 +155,8 @@ function PayComponents() {
         code,
         name,
         kind,
-        pf_wage: pfWage,
+        wage_basis: kind === "earning" ? wageBasis : "outside",
+        pf_wage: wageBasis === "wages",
         esi_wage: kind === "earning",
         taxable: true,
         sequence: (components?.length ?? 0) * 10 + 10,
@@ -163,7 +164,7 @@ function PayComponents() {
     onSuccess: () => {
       setCode("");
       setName("");
-      setPfWage(false);
+      setWageBasis("excluded");
       setKind("earning");
       setError(null);
       qc.invalidateQueries({ queryKey: ["pay-components"] });
@@ -208,9 +209,23 @@ function PayComponents() {
           {kind === "earning" ? "Earning" : "Deduction"}
         </Toggle>
         {kind === "earning" && (
-          <Toggle on={pfWage} onClick={() => setPfWage((v) => !v)}>
-            Counts toward PF
-          </Toggle>
+          <div className="flex flex-wrap gap-1.5">
+            {(
+              [
+                ["wages", "Wages"],
+                ["excluded", "Allowance"],
+                ["outside", "Reimbursement"],
+              ] as const
+            ).map(([value, label]) => (
+              <Toggle
+                key={value}
+                on={wageBasis === value}
+                onClick={() => setWageBasis(value)}
+              >
+                {label}
+              </Toggle>
+            ))}
+          </div>
         )}
         <Action type="submit" disabled={create.isPending}>
           Add
@@ -219,9 +234,14 @@ function PayComponents() {
 
       {/* The one setting here that silently changes a statutory remittance. */}
       <p className="t-meta mt-2">
-        &quot;Counts toward PF&quot; decides the PF wage — statutorily Basic and DA. Where
-        allowances fall is a judgement your auditor makes, not one this software can infer
-        from a name.
+        This classification decides the statutory wage, so it decides real money.
+        <strong className="font-medium"> Wages</strong> is basic and DA.
+        <strong className="font-medium"> Allowance</strong> is excluded from wages but
+        still counted when testing whether allowances exceed half of pay — from 21 Nov 2025
+        anything above that half is added back into wages.
+        <strong className="font-medium"> Reimbursement</strong> is not remuneration at all,
+        so it sits outside the test. Where a given allowance falls is your auditor&apos;s
+        judgement, not something this software can infer from a name.
       </p>
 
       {components && components.length > 0 ? (
@@ -229,7 +249,8 @@ function PayComponents() {
           {components.map((c) => (
             <Pill key={c.id}>
               {c.name}
-              {c.pf_wage && " · PF"}
+              {c.kind === "earning" && c.wage_basis === "wages" && " · wages"}
+              {c.kind === "earning" && c.wage_basis === "outside" && " · reimbursement"}
               {c.kind === "deduction" && " · deduction"}
             </Pill>
           ))}

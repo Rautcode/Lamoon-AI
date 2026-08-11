@@ -210,6 +210,12 @@ export type PayComponent = {
   code: string;
   name: string;
   kind: "earning" | "deduction";
+  /** How this component counts toward the STATUTORY WAGE (Code on Wages,
+   *  from 21 Nov 2025). "wages" = basic/DA, always in; "excluded" = out of
+   *  wages but counted in the remuneration the 50% test measures against;
+   *  "outside" = not remuneration at all (reimbursement of actual expense). */
+  wage_basis: "wages" | "excluded" | "outside";
+  /** Superseded by wage_basis; the server keeps it in step. */
   pf_wage: boolean;
   esi_wage: boolean;
   taxable: boolean;

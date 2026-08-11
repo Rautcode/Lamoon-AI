@@ -285,7 +285,9 @@ custom property are never out of sync by name.
 Honesty about scope matters more than a complete-looking spec:
 
 - **Income tax (TDS) computation.** Payroll computes PF, ESI and professional
-  tax; it does NOT compute income tax. Doing that properly needs regime
+  tax on a statutory wage derived per the Code on Wages definition (effective
+  21 Nov 2025, versioned in `payroll/rules.py` and stamped into every
+  payslip); it does NOT compute income tax. Doing that properly needs regime
   election, investment declarations and the proofs behind them — a subsystem
   that doesn't exist here. TDS is an input, entered from what the employer's
   accountant advises, and the UI says so on the screen where it's typed.

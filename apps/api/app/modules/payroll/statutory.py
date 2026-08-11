@@ -21,24 +21,18 @@ Maharashtra February professional-tax top-up (₹300 rather than ₹200 in the
 last month of the year — worth ₹100/employee/year, and easy to add as a
 per-slab month rule when a Maharashtra customer needs it).
 
-Rates below are national and statutory. Ceilings are passed in, because the
-government moves them and a redeploy is a bad way to find that out.
+Rates arrive as an effective-dated rule object (see `rules.py`) rather than
+module constants, so a run for a past period computes under that period's law.
+Ceilings are passed in separately because they are per-establishment
+configuration, not law the customer can't choose.
 """
 from datetime import date
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 
+from app.modules.payroll.rules import EpfRule, EsiRule
+
 ZERO = Decimal("0")
 
-EPF_RATE = Decimal("0.12")
-#: Of the employer's 12%, 8.33% is diverted to the pension scheme (EPS) and the
-#: remainder stays in EPF. EPS is capped on a ₹15,000 wage regardless of what
-#: the employer contributes on — that cap is statutory and separate from the
-#: company's own PF ceiling choice, so it is not configurable.
-EPS_RATE = Decimal("0.0833")
-EPS_WAGE_CAP = Decimal("15000")
-
-ESI_EMPLOYEE_RATE = Decimal("0.0075")
-ESI_EMPLOYER_RATE = Decimal("0.0325")
 
 
 def rupees(amount: Decimal) -> Decimal:
@@ -52,7 +46,12 @@ def money(amount: Decimal) -> Decimal:
 
 
 def provident_fund(
-    pf_wage: Decimal, *, ceiling: Decimal, on_full_wage: bool = False
+    pf_wage: Decimal,
+    *,
+    ceiling: Decimal,
+    rule: EpfRule,
+    on_full_wage: bool = False,
+    eps_eligible: bool = True,
 ) -> dict[str, Decimal]:
     """EPF at 12% each side, with the employer's share split into EPS and EPF.
 
@@ -63,15 +62,21 @@ def provident_fund(
     The employer's EPF share is the remainder AFTER pension, not another
     rounded percentage — deriving it by subtraction is what keeps
     employee-share and employer-share reconciling to the same 12% total
-    instead of drifting a rupee apart.
+    instead of drifting a rupee apart. That also means an EPS-ineligible
+    employee needs no special arithmetic: pension is zero and the whole
+    employer contribution falls through to EPF, which is exactly the rule.
     """
     base = pf_wage if on_full_wage else min(pf_wage, ceiling)
     if base <= ZERO:
         return {"employee": ZERO, "employer_epf": ZERO, "employer_eps": ZERO, "wage": ZERO}
 
-    employee = rupees(base * EPF_RATE)
-    employer_total = rupees(base * EPF_RATE)
-    pension = rupees(min(base, EPS_WAGE_CAP) * EPS_RATE)
+    employee = rupees(base * rule.employee_rate)
+    employer_total = rupees(base * rule.employer_rate)
+    pension = (
+        rupees(min(base, rule.pension_wage_cap) * rule.pension_rate)
+        if eps_eligible
+        else ZERO
+    )
     return {
         "employee": employee,
         "employer_eps": pension,
@@ -80,7 +85,9 @@ def provident_fund(
     }
 
 
-def esi(gross: Decimal, *, ceiling: Decimal, locked_in: bool = False) -> dict[str, Decimal]:
+def esi(
+    gross: Decimal, *, ceiling: Decimal, rule: EsiRule, locked_in: bool = False
+) -> dict[str, Decimal]:
     """ESI at 0.75% employee / 3.25% employer, on gross, below the ceiling.
 
     `locked_in` implements the contribution-period rule: ESI runs Apr–Sep and
@@ -94,10 +101,10 @@ def esi(gross: Decimal, *, ceiling: Decimal, locked_in: bool = False) -> dict[st
     if gross <= ZERO or (gross > ceiling and not locked_in):
         return {"employee": ZERO, "employer": ZERO, "wage": ZERO}
     return {
-        "employee": Decimal(gross * ESI_EMPLOYEE_RATE).quantize(
+        "employee": Decimal(gross * rule.employee_rate).quantize(
             Decimal("1"), rounding=ROUND_CEILING
         ),
-        "employer": Decimal(gross * ESI_EMPLOYER_RATE).quantize(
+        "employer": Decimal(gross * rule.employer_rate).quantize(
             Decimal("1"), rounding=ROUND_CEILING
         ),
         "wage": money(gross),

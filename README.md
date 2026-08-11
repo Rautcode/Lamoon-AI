@@ -10,8 +10,9 @@ Redis/Celery, with a Next.js frontend. See [`ARCHITECTURE.md`](ARCHITECTURE.md),
 seat-limit enforcement, employee directory + departments, leave management
 (configurable types, request/approve workflow, derived balances, billed in
 WORKING days against a configurable work week + holiday calendar), payroll
-(salary structures, EPF/ESI/professional tax, monthly runs, immutable
-payslips — income tax is an input, not a computation), attendance
+(salary structures, EPF/ESI/professional tax on an effective-dated statutory
+wage basis, monthly runs, immutable payslips that record the rule versions
+they were computed under — income tax is an input, not a computation), attendance
 (timezone-aware punch ledger, presence, hours heatmap), employee self-service, and the
 full AI ATS flow — resume intake → Gemini screening → ranking → email
 automation → self-service interview scheduling with reminders. **Lumo**, the

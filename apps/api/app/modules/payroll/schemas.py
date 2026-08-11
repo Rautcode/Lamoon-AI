@@ -8,13 +8,18 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.modules.payroll.rules import WAGE_BASIS_VALUES
 
 
 class PayComponentIn(BaseModel):
     code: str = Field(min_length=1, max_length=40)
     name: str = Field(min_length=1, max_length=120)
     kind: str = "earning"
+    #: "wages" | "excluded" | "outside" — see rules.WAGE_BASIS_VALUES. Decides
+    #: the statutory wage, and therefore real money from 21 Nov 2025.
+    wage_basis: str = "excluded"
     pf_wage: bool = False
     esi_wage: bool = True
     taxable: bool = True
@@ -26,6 +31,22 @@ class PayComponentIn(BaseModel):
         if v not in ("earning", "deduction"):
             raise ValueError("kind must be 'earning' or 'deduction'")
         return v
+
+    @field_validator("wage_basis")
+    @classmethod
+    def _wage_basis(cls, v: str) -> str:
+        if v not in WAGE_BASIS_VALUES:
+            raise ValueError(f"wage_basis must be one of {', '.join(WAGE_BASIS_VALUES)}")
+        return v
+
+    @model_validator(mode="after")
+    def _sync_legacy_pf_wage(self) -> "PayComponentIn":
+        """`pf_wage` predates `wage_basis`. Honour it when a caller sends only
+        the old field, so existing integrations keep working."""
+        if self.pf_wage and self.wage_basis == "excluded":
+            object.__setattr__(self, "wage_basis", "wages")
+        object.__setattr__(self, "pf_wage", self.wage_basis == "wages")
+        return self
 
     @field_validator("code")
     @classmethod

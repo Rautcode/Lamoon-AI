@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.db import engine
+from app.modules.payroll.rules import epf_rule_for, esi_rule_for
 from app.modules.payroll.statutory import (
     contribution_period_start,
     esi,
@@ -23,6 +24,11 @@ from app.modules.payroll.statutory import (
 
 D = Decimal
 
+#: Rates are effective-dated now (rules.py). These tests assert the ARITHMETIC,
+#: so they pin a rule explicitly rather than tracking whatever is current.
+EPF = epf_rule_for(date(2026, 1, 1))
+ESI = esi_rule_for(date(2026, 1, 1))
+
 
 # --- statutory arithmetic (no database) -------------------------------------
 
@@ -30,7 +36,7 @@ D = Decimal
 def test_pf_on_a_wage_below_the_ceiling():
     """₹12,000 basic: 12% each side = ₹1,440. Employer's 8.33% pension is
     ₹999.60 -> ₹1,000, leaving ₹440 in EPF."""
-    pf = provident_fund(D("12000"), ceiling=D("15000"))
+    pf = provident_fund(D("12000"), ceiling=D("15000"), rule=EPF)
     assert pf["employee"] == D("1440")
     assert pf["employer_eps"] == D("1000")
     assert pf["employer_epf"] == D("440")
@@ -39,13 +45,13 @@ def test_pf_on_a_wage_below_the_ceiling():
 
 def test_pf_caps_at_the_wage_ceiling_by_default():
     """₹50,000 basic, capped at ₹15,000 -> ₹1,800 (not ₹6,000)."""
-    pf = provident_fund(D("50000"), ceiling=D("15000"))
+    pf = provident_fund(D("50000"), ceiling=D("15000"), rule=EPF)
     assert pf["employee"] == D("1800")
     assert pf["wage"] == D("15000.00")
 
 
 def test_pf_on_full_wage_when_the_employer_opted_in():
-    pf = provident_fund(D("50000"), ceiling=D("15000"), on_full_wage=True)
+    pf = provident_fund(D("50000"), ceiling=D("15000"), rule=EPF, on_full_wage=True)
     assert pf["employee"] == D("6000")
     # Pension stays capped on ₹15,000 whatever the employer contributes on:
     # 8.33% of 15000 = ₹1,249.50 -> ₹1,250, the statutory EPS maximum.
@@ -56,19 +62,19 @@ def test_pf_on_full_wage_when_the_employer_opted_in():
 def test_employer_and_employee_pf_always_reconcile():
     """Rounding each share separately would let the two sides drift apart."""
     for wage in ("7777", "13333.33", "15000", "9999.99", "1"):
-        pf = provident_fund(D(wage), ceiling=D("15000"))
+        pf = provident_fund(D(wage), ceiling=D("15000"), rule=EPF)
         assert pf["employer_eps"] + pf["employer_epf"] == pf["employee"], wage
 
 
 def test_no_pf_wage_means_no_contribution():
-    pf = provident_fund(D("0"), ceiling=D("15000"))
+    pf = provident_fund(D("0"), ceiling=D("15000"), rule=EPF)
     assert pf == {"employee": D("0"), "employer_epf": D("0"), "employer_eps": D("0"),
                   "wage": D("0")}
 
 
 def test_esi_applies_below_the_ceiling_and_rounds_up():
     """₹18,000 gross: 0.75% = ₹135 exactly, 3.25% = ₹585."""
-    amounts = esi(D("18000"), ceiling=D("21000"))
+    amounts = esi(D("18000"), ceiling=D("21000"), rule=ESI)
     assert amounts["employee"] == D("135")
     assert amounts["employer"] == D("585")
 
@@ -76,17 +82,17 @@ def test_esi_applies_below_the_ceiling_and_rounds_up():
 def test_esi_rounds_up_not_half_up():
     """ESIC regulation 40 rounds to the NEXT rupee. 0.75% of 10,001 is
     ₹75.0075 — half-up would give ₹75, ESI wants ₹76."""
-    assert esi(D("10001"), ceiling=D("21000"))["employee"] == D("76")
+    assert esi(D("10001"), ceiling=D("21000"), rule=ESI)["employee"] == D("76")
 
 
 def test_esi_stops_above_the_ceiling():
-    assert esi(D("25000"), ceiling=D("21000"))["employee"] == D("0")
+    assert esi(D("25000"), ceiling=D("21000"), rule=ESI)["employee"] == D("0")
 
 
 def test_esi_continues_to_period_end_after_a_mid_period_raise():
     """The rule that catches employers out: crossing the ceiling mid-period
     does NOT stop contributions until the period ends."""
-    assert esi(D("25000"), ceiling=D("21000"), locked_in=True)["employee"] == D("188")
+    assert esi(D("25000"), ceiling=D("21000"), rule=ESI, locked_in=True)["employee"] == D("188")
 
 
 def test_esi_contribution_periods():

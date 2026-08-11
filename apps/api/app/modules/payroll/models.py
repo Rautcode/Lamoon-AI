@@ -57,10 +57,18 @@ class PayComponent(TenantBase):
     code: Mapped[str] = mapped_column(String(40))  # stable key, e.g. "BASIC"
     name: Mapped[str] = mapped_column(String(120))
     kind: Mapped[str] = mapped_column(String(20), default="earning")  # earning|deduction
-    #: Counts toward PF wages. Statutorily Basic + DA; the 2019 Supreme Court
-    #: ruling pulled universally-paid allowances in too, and where the line
-    #: falls is still argued between employers and their auditors. That's a
-    #: judgement call belonging to the customer's CA, not to this code.
+    #: How this component is treated when deriving the STATUTORY WAGE
+    #: (rules.WAGE_BASIS_VALUES):
+    #:   "wages"    basic, DA, retaining allowance — always in
+    #:   "excluded" HRA, conveyance, special allowance, OT — out of wages, but
+    #:              counted in the remuneration the 50% test measures against
+    #:   "outside"  not remuneration at all (reimbursement of actual expense)
+    #: From 21 Nov 2025 the excluded portion above half of remuneration is
+    #: added back, so this classification decides real money — see rules.py.
+    wage_basis: Mapped[str] = mapped_column(String(10), default="excluded")
+    #: Superseded by `wage_basis` and kept so pre-existing structures and any
+    #: caller still sending it keep working. `wage_basis` is what the engine
+    #: reads; migration 0012 back-fills it from this.
     pf_wage: Mapped[bool] = mapped_column(Boolean, default=False)
     #: Counts toward ESI gross wages. Nearly all earnings do.
     esi_wage: Mapped[bool] = mapped_column(Boolean, default=True)

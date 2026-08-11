@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.hr_core.models import Employee
 from app.modules.leave.models import LeaveRequest, LeaveType
-from app.modules.payroll import statutory
+from app.modules.payroll import rules, statutory
 from app.modules.payroll.models import (
     PayComponent,
     PayrollRun,
@@ -236,8 +236,8 @@ def compute_payslip(
 
     earnings: list[dict] = []
     other_deductions: list[dict] = []
+    wage_lines: list[tuple[Decimal, str]] = []
     gross = ZERO
-    pf_wage = ZERO
     esi_wage = ZERO
 
     for salary, component in sorted(rows, key=lambda r: (r[1].sequence, r[1].name)):
@@ -248,16 +248,25 @@ def compute_payslip(
             continue
         earnings.append(line)
         gross += amount
-        if component.pf_wage:
-            pf_wage += amount
+        wage_lines.append((amount, component.wage_basis))
         if component.esi_wage:
             esi_wage += amount
+
+    # The statutory wage is DERIVED, not nominated. From 21 Nov 2025 an
+    # employer can't shrink their PF liability by moving pay into allowances:
+    # excluded pay above half of remuneration is added back.
+    wage_def = rules.wage_definition_for(period)
+    basis = rules.statutory_wage(wage_lines, wage_def)
+    pf_wage = basis.statutory_wage
+    epf_rule = rules.epf_rule_for(period)
+    esi_rule = rules.esi_rule_for(period)
 
     settings = get_settings(db, company_id)
 
     pf = (
         statutory.provident_fund(
-            pf_wage, ceiling=settings.pf_wage_ceiling, on_full_wage=settings.pf_on_full_wage
+            pf_wage, ceiling=settings.pf_wage_ceiling, rule=epf_rule,
+            on_full_wage=settings.pf_on_full_wage,
         )
         if settings.pf_enabled
         else {"employee": ZERO, "employer_epf": ZERO, "employer_eps": ZERO, "wage": ZERO}
@@ -266,6 +275,7 @@ def compute_payslip(
         statutory.esi(
             esi_wage,
             ceiling=settings.esi_wage_ceiling,
+            rule=esi_rule,
             locked_in=esi_locked_in(db, employee.id, period),
         )
         if settings.esi_enabled
@@ -315,6 +325,21 @@ def compute_payslip(
                 "pf_wage": str(pf["wage"]),
                 "esi_wage": str(esi_amounts["wage"]),
                 "proration": f"{paid_days}/{working_days} working days",
+                # How the statutory wage was arrived at. Without this a payslip
+                # can only be explained by reconstructing the whole database.
+                "statutory_wage": str(basis.statutory_wage),
+                "nominated_wages": str(basis.nominated_wages),
+                "excluded_allowances": str(basis.excluded),
+                "remuneration": str(basis.remuneration),
+                "added_back": str(basis.added_back),
+            },
+            # The rules this payslip was computed under, resolved by PERIOD.
+            # Re-running a corrected month years later must use these, not
+            # whatever is current then.
+            "rule_versions": {
+                "wage_definition": wage_def.version,
+                "epf": epf_rule.version,
+                "esi": esi_rule.version,
             },
         },
     }
