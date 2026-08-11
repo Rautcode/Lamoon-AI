@@ -1,10 +1,12 @@
 "use client";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lock, RefreshCw } from "lucide-react";
+import { Lock, RefreshCw, Settings2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { hasPermission, useAuthStore } from "@/lib/auth-store";
 import type { Payslip } from "@/lib/types";
 import { Action, Avatar, Empty, Pill, SectionLabel, Status } from "@/components/lamoon/primitives";
+import { PayrollSetup } from "@/components/lamoon/payroll-setup";
 import { Input } from "@/components/ui/input";
 
 /* Payroll.
@@ -159,6 +161,8 @@ export default function PayPage() {
   const [openSlip, setOpenSlip] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [configuring, setConfiguring] = useState(false);
+  const canWrite = hasPermission(useAuthStore((s) => s.permissions), "payroll.write");
 
   const runs = useQuery({ queryKey: ["payroll-runs"], queryFn: api.payroll.runs });
   const runId = selected ?? runs.data?.[0]?.id ?? null;
@@ -196,17 +200,27 @@ export default function PayPage() {
     <div className="fade mx-auto w-full max-w-5xl px-5 py-10 sm:px-8 sm:py-14">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <h1 className="t-display">Pay</h1>
-        <Action
-          variant="quiet"
-          onClick={() => compute.mutate(thisMonth())}
-          disabled={compute.isPending}
-        >
-          <RefreshCw className="size-4" aria-hidden />
-          {compute.isPending ? "Computing…" : `Run ${monthLabel(thisMonth())}`}
-        </Action>
+        {canWrite && (
+          <div className="flex flex-wrap gap-2">
+            <Action variant="quiet" onClick={() => setConfiguring((v) => !v)}>
+              <Settings2 className="size-4" aria-hidden />
+              Setup
+            </Action>
+            <Action onClick={() => compute.mutate(thisMonth())} disabled={compute.isPending}>
+              <RefreshCw className="size-4" aria-hidden />
+              {compute.isPending ? "Computing…" : `Run ${monthLabel(thisMonth())}`}
+            </Action>
+          </div>
+        )}
       </header>
 
       {error && <p className="mt-4 text-[0.8125rem] text-[var(--critical)]">{error}</p>}
+
+      {configuring && canWrite && (
+        <div className="mt-6">
+          <PayrollSetup />
+        </div>
+      )}
 
       {runs.data && runs.data.length > 1 && (
         <div className="mt-6 flex flex-wrap gap-2">

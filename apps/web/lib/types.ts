@@ -201,3 +201,38 @@ export type PayrollSettings = {
   esi_wage_ceiling: string;
   pf_on_full_wage: boolean;
 };
+
+/** A line that can appear on a payslip. The three booleans are what the
+ *  statutory engine reads — "is this part of PF wages?" has no answer the
+ *  software can infer from a name. */
+export type PayComponent = {
+  id: string;
+  code: string;
+  name: string;
+  kind: "earning" | "deduction";
+  pf_wage: boolean;
+  esi_wage: boolean;
+  taxable: boolean;
+  sequence: number;
+};
+
+export type NewPayComponent = Omit<PayComponent, "id">;
+
+/** Professional tax is per-STATE, so the schedule is data the customer enters
+ *  from their own state, not a rule shipped in code. `up_to: null` is the
+ *  unbounded top slab. */
+export type PTSlab = { id: string; up_to: string | null; amount: string };
+
+export type SalaryLine = {
+  component_id: string;
+  code: string;
+  name: string;
+  kind: string;
+  amount: string;
+};
+
+export type SalaryStructure = {
+  employee_id: string;
+  components: SalaryLine[];
+  monthly_gross: string;
+};

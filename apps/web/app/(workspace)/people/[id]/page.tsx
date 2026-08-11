@@ -8,6 +8,7 @@ import { hasPermission, useAuthStore } from "@/lib/auth-store";
 import { askLumoGlobally } from "@/components/lamoon/command-palette";
 import { LumoMark } from "@/components/lamoon/lumo";
 import { Action, Avatar, Empty, Pill, SectionLabel, Status } from "@/components/lamoon/primitives";
+import { SalaryEditor } from "@/components/lamoon/salary-editor";
 
 /* One intelligent page per person.
 
@@ -62,6 +63,10 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
   const queryClient = useQueryClient();
   const permissions = useAuthStore((s) => s.permissions);
   const canWrite = hasPermission(permissions, "employee.write");
+  // Pay is a tighter boundary than the rest of this page: HR/admin only, and
+  // deliberately not managers.
+  const canSeePay = hasPermission(permissions, "payroll.read");
+  const canEditPay = hasPermission(permissions, "payroll.write");
 
   const invite = useMutation({
     mutationFn: () => api.employees.invite(id),
@@ -175,9 +180,20 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
         )}
       </section>
 
+      {/* --- Salary ---------------------------------------------------------- */}
+      {canSeePay && (
+        <section style={{ "--i": 5 } as React.CSSProperties} className="mt-12">
+          <SalaryEditor
+            employeeId={id}
+            firstName={person.full_name.split(" ")[0]}
+            canWrite={canEditPay}
+          />
+        </section>
+      )}
+
       {/* --- Self-service access -------------------------------------------- */}
       {canWrite && (
-        <section style={{ "--i": 5 } as React.CSSProperties} className="mt-12">
+        <section style={{ "--i": 6 } as React.CSSProperties} className="mt-12">
           <SectionLabel>Self-service access</SectionLabel>
           {invite.isSuccess || person.user_id ? (
             <p className="t-meta">
@@ -208,7 +224,7 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
       )}
 
       {/* --- Lumo ----------------------------------------------------------- */}
-      <section style={{ "--i": 6 } as React.CSSProperties} className="mt-12">
+      <section style={{ "--i": 7 } as React.CSSProperties} className="mt-12">
         <button
           onClick={() => askLumoGlobally(`Tell me about ${person.full_name}`)}
           className="flex w-full items-center gap-3 rounded-[14px] bg-[var(--surface-1)] px-4 py-3.5

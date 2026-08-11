@@ -13,10 +13,14 @@ import type {
   LeaveType,
   Me,
   NewDepartment,
+  NewPayComponent,
+  PayComponent,
   PayrollRun,
   PayrollRunDetail,
   PayrollSettings,
   Payslip,
+  PTSlab,
+  SalaryStructure,
   Presence,
   WorkWeek,
   NewEmployee,
@@ -204,6 +208,34 @@ export const api = {
     finalize: (id: string) =>
       request<PayrollRun>(`/payroll/runs/${id}/finalize`, { method: "POST" }),
     settings: () => request<PayrollSettings>("/payroll/settings"),
+    setSettings: (body: PayrollSettings) =>
+      request<PayrollSettings>("/payroll/settings", {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+    components: () => request<PayComponent[]>("/payroll/components"),
+    createComponent: (body: NewPayComponent) =>
+      request<PayComponent>("/payroll/components", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    ptSlabs: () => request<PTSlab[]>("/payroll/pt-slabs"),
+    /** Replaces the whole schedule — a slab table is edited as a unit, since
+     *  patching one row of it is how you end up with a gap. */
+    setPtSlabs: (slabs: { up_to: string | null; amount: string }[]) =>
+      request<PTSlab[]>("/payroll/pt-slabs", {
+        method: "PUT",
+        body: JSON.stringify(slabs),
+      }),
+    salary: (employeeId: string) =>
+      request<SalaryStructure>(`/payroll/employees/${employeeId}/salary`),
+    setSalary: (employeeId: string, components: { component_id: string; amount: string }[]) =>
+      request<SalaryStructure>(`/payroll/employees/${employeeId}/salary`, {
+        method: "PUT",
+        body: JSON.stringify({ components }),
+      }),
+    employeePayslips: (employeeId: string) =>
+      request<Payslip[]>(`/payroll/employees/${employeeId}/payslips`),
   },
   jobs: {
     list: () => request<Job[]>("/ats/jobs"),
