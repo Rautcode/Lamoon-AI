@@ -3,7 +3,7 @@ RLS policies are added in the migration, not here."""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,7 +24,10 @@ class JobOpening(TenantBase):
 class Candidate(TenantBase):
     __tablename__ = "candidates"
     __table_args__ = (
-        UniqueConstraint("company_id", "resume_sha256", name="uq_candidate_resume"),
+        # Partial: a deleted candidate releases their resume hash, so the same
+        # CV can be uploaded again (migration 0010).
+        Index("uq_candidate_resume", "company_id", "resume_sha256", unique=True,
+              postgresql_where=text("deleted_at IS NULL")),
     )
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(200), nullable=True)

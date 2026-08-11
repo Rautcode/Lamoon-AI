@@ -8,12 +8,14 @@ from pydantic import BaseModel
 class LeaveTypeIn(BaseModel):
     name: str
     annual_quota: int
+    paid: bool = True  # False => loss of pay in payroll
 
 
 class LeaveTypeOut(BaseModel):
     id: uuid.UUID
     name: str
     annual_quota: int
+    paid: bool
 
     model_config = {"from_attributes": True}
 

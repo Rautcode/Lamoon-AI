@@ -1,0 +1,393 @@
+"""Payroll endpoints.
+
+Salary is the most confidential data in an HRMS, so the permissions here are
+tighter than anywhere else in the product:
+
+- `payroll.read` / `payroll.write` — HR and admin only.
+- **manager gets neither.** A manager can approve their team's leave and see
+  their attendance; whether they may see their team's pay is a policy decision
+  every company answers differently, and the safe default is no.
+- an employee sees their own payslips, and only from FINALIZED runs — a draft
+  is a number someone is still editing, and showing it as pay would generate
+  a support ticket at best.
+"""
+import uuid
+from datetime import UTC, datetime
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.auth.provider import Principal
+from app.core.db import get_db
+from app.core.rbac import current_user, require
+from app.core.tenant import resolve_tenant
+from app.modules.audit import service as audit
+from app.modules.hr_core.models import Employee
+from app.modules.payroll import service
+from app.modules.payroll.models import (
+    PayComponent,
+    PayrollRun,
+    Payslip,
+    ProfessionalTaxSlab,
+    SalaryComponent,
+)
+from app.modules.payroll.schemas import (
+    PayComponentIn,
+    PayComponentOut,
+    PayrollSettingsIn,
+    PayrollSettingsOut,
+    PayslipAdjustIn,
+    PayslipOut,
+    PTSlabIn,
+    PTSlabOut,
+    RunDetailOut,
+    RunIn,
+    RunOut,
+    SalaryComponentOut,
+    SalaryStructureIn,
+    SalaryStructureOut,
+)
+
+router = APIRouter(prefix="/payroll", tags=["payroll"])
+CAN_READ = [Depends(require("payroll.read"))]
+CAN_WRITE = [Depends(require("payroll.write"))]
+
+
+# --- configuration ----------------------------------------------------------
+
+
+@router.get("/settings", response_model=PayrollSettingsOut, dependencies=CAN_READ)
+def get_settings(db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)):
+    return service.get_settings(db, uuid.UUID(cid))
+
+
+@router.put("/settings", response_model=PayrollSettingsOut, dependencies=CAN_WRITE)
+def update_settings(
+    body: PayrollSettingsIn, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    company_id = uuid.UUID(cid)
+    row = service.get_settings(db, company_id)
+    for field, value in body.model_dump().items():
+        setattr(row, field, value)
+    db.flush()
+    audit.record(
+        db, company_id=company_id, entity="payroll_settings", entity_id=row.id,
+        action="updated", payload=body.model_dump(mode="json"),
+    )
+    return row
+
+
+@router.get("/components", response_model=list[PayComponentOut], dependencies=CAN_READ)
+def list_components(db: Session = Depends(get_db), _cid: str = Depends(resolve_tenant)):
+    return db.scalars(
+        select(PayComponent)
+        .where(PayComponent.deleted_at.is_(None))
+        .order_by(PayComponent.sequence, PayComponent.name)
+    ).all()
+
+
+@router.post("/components", response_model=PayComponentOut, dependencies=CAN_WRITE)
+def create_component(
+    body: PayComponentIn, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    existing = db.scalar(
+        select(PayComponent).where(
+            PayComponent.code == body.code, PayComponent.deleted_at.is_(None)
+        )
+    )
+    if existing:
+        raise HTTPException(409, f"a component with code {body.code} already exists")
+    component = PayComponent(company_id=uuid.UUID(cid), **body.model_dump())
+    db.add(component)
+    db.flush()
+    return component
+
+
+@router.get("/pt-slabs", response_model=list[PTSlabOut], dependencies=CAN_READ)
+def list_pt_slabs(db: Session = Depends(get_db), _cid: str = Depends(resolve_tenant)):
+    rows = db.scalars(
+        select(ProfessionalTaxSlab).where(ProfessionalTaxSlab.deleted_at.is_(None))
+    ).all()
+    return sorted(rows, key=lambda s: (s.up_to is None, s.up_to or 0))
+
+
+@router.put("/pt-slabs", response_model=list[PTSlabOut], dependencies=CAN_WRITE)
+def replace_pt_slabs(
+    body: list[PTSlabIn], db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Replace the whole schedule. A state's PT table is edited as a unit —
+    patching one slab of a slab schedule is how you end up with a gap."""
+    company_id = uuid.UUID(cid)
+    if sum(1 for s in body if s.up_to is None) > 1:
+        raise HTTPException(422, "only one slab can be unbounded (up_to = null)")
+
+    now = datetime.now(UTC)
+    for old in db.scalars(
+        select(ProfessionalTaxSlab).where(ProfessionalTaxSlab.deleted_at.is_(None))
+    ).all():
+        old.deleted_at = now
+    slabs = [ProfessionalTaxSlab(company_id=company_id, **s.model_dump()) for s in body]
+    db.add_all(slabs)
+    db.flush()
+    audit.record(
+        db, company_id=company_id, entity="pt_slabs", entity_id=company_id,
+        action="replaced", payload={"slabs": [s.model_dump(mode="json") for s in body]},
+    )
+    return sorted(slabs, key=lambda s: (s.up_to is None, s.up_to or 0))
+
+
+# --- salary structures ------------------------------------------------------
+
+
+def _structure(db: Session, employee_id: uuid.UUID) -> SalaryStructureOut:
+    rows = db.execute(
+        select(SalaryComponent, PayComponent)
+        .join(PayComponent, PayComponent.id == SalaryComponent.component_id)
+        .where(
+            SalaryComponent.employee_id == employee_id,
+            SalaryComponent.deleted_at.is_(None),
+            PayComponent.deleted_at.is_(None),
+        )
+    ).all()
+    components = [
+        SalaryComponentOut(
+            component_id=c.id, code=c.code, name=c.name, kind=c.kind, amount=s.amount
+        )
+        for s, c in sorted(rows, key=lambda r: (r[1].sequence, r[1].name))
+    ]
+    return SalaryStructureOut(
+        employee_id=employee_id,
+        components=components,
+        monthly_gross=sum((c.amount for c in components if c.kind == "earning"), start=0),
+    )
+
+
+@router.get(
+    "/employees/{employee_id}/salary", response_model=SalaryStructureOut, dependencies=CAN_READ
+)
+def get_salary(
+    employee_id: uuid.UUID, db: Session = Depends(get_db), _cid: str = Depends(resolve_tenant)
+):
+    return _structure(db, employee_id)
+
+
+@router.put(
+    "/employees/{employee_id}/salary", response_model=SalaryStructureOut, dependencies=CAN_WRITE
+)
+def set_salary(
+    employee_id: uuid.UUID,
+    body: SalaryStructureIn,
+    db: Session = Depends(get_db),
+    cid: str = Depends(resolve_tenant),
+):
+    company_id = uuid.UUID(cid)
+    employee = db.get(Employee, employee_id)
+    if employee is None or employee.deleted_at is not None:
+        raise HTTPException(404, "employee not found")
+
+    known = {
+        c.id
+        for c in db.scalars(
+            select(PayComponent).where(PayComponent.deleted_at.is_(None))
+        ).all()
+    }
+    unknown = [str(c.component_id) for c in body.components if c.component_id not in known]
+    if unknown:
+        raise HTTPException(422, f"unknown pay components: {', '.join(unknown)}")
+
+    now = datetime.now(UTC)
+    for old in db.scalars(
+        select(SalaryComponent).where(
+            SalaryComponent.employee_id == employee_id, SalaryComponent.deleted_at.is_(None)
+        )
+    ).all():
+        old.deleted_at = now
+    db.add_all(
+        SalaryComponent(
+            company_id=company_id, employee_id=employee_id,
+            component_id=c.component_id, amount=c.amount,
+        )
+        for c in body.components
+    )
+    db.flush()
+    structure = _structure(db, employee_id)
+    # The amounts stay out of the audit payload: the audit log is readable by
+    # more people than the salary is, and "who changed it, when" is the part
+    # that needs to be tamper-evident.
+    audit.record(
+        db, company_id=company_id, entity="salary_structure", entity_id=employee_id,
+        action="updated", payload={"component_count": len(body.components)},
+    )
+    return structure
+
+
+# --- runs -------------------------------------------------------------------
+
+
+def _run_or_404(db: Session, run_id: uuid.UUID) -> PayrollRun:
+    run = db.get(PayrollRun, run_id)
+    if run is None or run.deleted_at is not None:
+        raise HTTPException(404, "payroll run not found")
+    return run
+
+
+def _payslips(db: Session, run_id: uuid.UUID) -> list[Payslip]:
+    return list(
+        db.scalars(
+            select(Payslip)
+            .where(Payslip.run_id == run_id, Payslip.deleted_at.is_(None))
+            .order_by(Payslip.employee_name)
+        ).all()
+    )
+
+
+def _detail(db: Session, run: PayrollRun) -> RunDetailOut:
+    return RunDetailOut(
+        **RunOut.model_validate(run).model_dump(),
+        payslips=[PayslipOut.model_validate(p) for p in _payslips(db, run.id)],
+    )
+
+
+@router.get("/runs", response_model=list[RunOut], dependencies=CAN_READ)
+def list_runs(db: Session = Depends(get_db), _cid: str = Depends(resolve_tenant)):
+    return db.scalars(
+        select(PayrollRun)
+        .where(PayrollRun.deleted_at.is_(None))
+        .order_by(PayrollRun.period.desc())
+    ).all()
+
+
+@router.post("/runs", response_model=RunDetailOut, dependencies=CAN_WRITE)
+def create_run(body: RunIn, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)):
+    """Open (or reopen) the draft for a month and compute every payslip.
+
+    Calling this twice for the same month recomputes the existing draft rather
+    than creating a second one — the unique constraint on (company, period)
+    means there is exactly one payroll for March, always.
+    """
+    company_id = uuid.UUID(cid)
+    period = body.period.replace(day=1)
+    run = db.scalar(
+        select(PayrollRun).where(PayrollRun.period == period, PayrollRun.deleted_at.is_(None))
+    )
+    if run is None:
+        run = PayrollRun(company_id=company_id, period=period)
+        db.add(run)
+        db.flush()
+    try:
+        service.build_run(db, company_id=company_id, run=run)
+    except service.RunFinalized as e:
+        raise HTTPException(409, str(e)) from None
+
+    audit.record(
+        db, company_id=company_id, entity="payroll_run", entity_id=run.id,
+        action="computed", payload={"period": period.isoformat(), "net_total": str(run.net_total)},
+    )
+    return _detail(db, run)
+
+
+@router.get("/runs/{run_id}", response_model=RunDetailOut, dependencies=CAN_READ)
+def get_run(
+    run_id: uuid.UUID, db: Session = Depends(get_db), _cid: str = Depends(resolve_tenant)
+):
+    return _detail(db, _run_or_404(db, run_id))
+
+
+@router.patch(
+    "/runs/{run_id}/payslips/{payslip_id}", response_model=PayslipOut, dependencies=CAN_WRITE
+)
+def adjust_payslip(
+    run_id: uuid.UUID,
+    payslip_id: uuid.UUID,
+    body: PayslipAdjustIn,
+    db: Session = Depends(get_db),
+    cid: str = Depends(resolve_tenant),
+):
+    company_id = uuid.UUID(cid)
+    run = _run_or_404(db, run_id)
+    if run.status == "finalized":
+        raise HTTPException(409, "this run is finalized and cannot be changed")
+
+    slip = db.get(Payslip, payslip_id)
+    if slip is None or slip.run_id != run_id or slip.deleted_at is not None:
+        raise HTTPException(404, "payslip not found")
+    employee = db.get(Employee, slip.employee_id)
+    if employee is None:
+        raise HTTPException(404, "employee not found")
+
+    if body.lop_days is not None:
+        slip.lop_days = body.lop_days
+        slip.lop_overridden = True  # survives the next recompute
+    if body.tds is not None:
+        slip.tds = body.tds
+
+    computed = service.compute_payslip(
+        db, company_id=company_id, employee=employee, period=run.period,
+        lop_days=slip.lop_days, tds=slip.tds,
+    )
+    for field in (
+        "employee_name", "period", "working_days", "paid_days", "lop_days",
+        "gross", "deductions", "net", "employer_cost", "esi_employee", "breakdown",
+    ):
+        setattr(slip, field, computed[field])
+    db.flush()
+
+    # Recompute the run totals from the payslips so the header can't drift
+    # away from the rows it is supposed to be summing.
+    slips = _payslips(db, run_id)
+    zero = Decimal("0")
+    run.gross_total = sum((p.gross for p in slips), start=zero)
+    run.deductions_total = sum((p.deductions for p in slips), start=zero)
+    run.net_total = sum((p.net for p in slips), start=zero)
+    run.employer_cost_total = sum((p.employer_cost for p in slips), start=zero)
+    db.flush()
+
+    audit.record(
+        db, company_id=company_id, entity="payslip", entity_id=slip.id, action="adjusted",
+        payload={"lop_days": slip.lop_days, "tds": str(slip.tds)},
+    )
+    return slip
+
+
+@router.post("/runs/{run_id}/finalize", response_model=RunOut, dependencies=CAN_WRITE)
+def finalize_run(
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
+    cid: str = Depends(resolve_tenant),
+):
+    """One way. After this the numbers are what was paid, and the only way to
+    correct a mistake is an adjustment in a later month — which is also how
+    payroll corrections work outside software."""
+    run = _run_or_404(db, run_id)
+    if run.status == "finalized":
+        raise HTTPException(409, "this run is already finalized")
+    if not _payslips(db, run_id):
+        raise HTTPException(422, "nothing to finalize: this run has no payslips")
+
+    run.status = "finalized"
+    run.finalized_at = datetime.now(UTC)
+    run.finalized_by = uuid.UUID(principal.user_id)
+    db.flush()
+    audit.record(
+        db, company_id=uuid.UUID(cid), entity="payroll_run", entity_id=run.id,
+        action="finalized",
+        payload={"period": run.period.isoformat(), "net_total": str(run.net_total)},
+    )
+    return run
+
+
+@router.get(
+    "/employees/{employee_id}/payslips", response_model=list[PayslipOut], dependencies=CAN_READ
+)
+def employee_payslips(
+    employee_id: uuid.UUID, db: Session = Depends(get_db), _cid: str = Depends(resolve_tenant)
+):
+    return db.scalars(
+        select(Payslip)
+        .join(PayrollRun, PayrollRun.id == Payslip.run_id)
+        .where(Payslip.employee_id == employee_id, Payslip.deleted_at.is_(None))
+        .order_by(PayrollRun.period.desc())
+    ).all()

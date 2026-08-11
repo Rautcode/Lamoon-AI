@@ -148,3 +148,56 @@ export type WorkWeek = {
   /** Monday-first, seven chars, "1" = worked. */
   working_days: string;
 };
+
+/** One line on a payslip. Amounts are strings: they come from Postgres
+ *  NUMERIC and must not round-trip through a JS number, which cannot hold
+ *  every rupee-and-paise value exactly. Format them, don't compute with them. */
+export type PayLine = { code: string; name: string; amount: string };
+
+export type PayslipBreakdown = {
+  earnings: PayLine[];
+  deductions: PayLine[];
+  employer_contributions: PayLine[];
+  basis: { pf_wage: string; esi_wage: string; proration: string };
+};
+
+export type Payslip = {
+  id: string;
+  run_id: string;
+  employee_id: string;
+  employee_name: string;
+  /** First day of the pay month, snapshotted onto the payslip so it reads on
+   *  its own without joining back to the run. */
+  period: string;
+  working_days: number;
+  paid_days: number;
+  lop_days: number;
+  lop_overridden: boolean;
+  gross: string;
+  deductions: string;
+  net: string;
+  employer_cost: string;
+  tds: string;
+  breakdown: PayslipBreakdown;
+};
+
+export type PayrollRun = {
+  id: string;
+  period: string;
+  status: "draft" | "finalized";
+  finalized_at: string | null;
+  gross_total: string;
+  deductions_total: string;
+  net_total: string;
+  employer_cost_total: string;
+};
+
+export type PayrollRunDetail = PayrollRun & { payslips: Payslip[] };
+
+export type PayrollSettings = {
+  pf_enabled: boolean;
+  esi_enabled: boolean;
+  pf_wage_ceiling: string;
+  esi_wage_ceiling: string;
+  pf_on_full_wage: boolean;
+};

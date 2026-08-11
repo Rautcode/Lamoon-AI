@@ -194,6 +194,32 @@ def test_deleted_holiday_stops_discounting(client, org):
 
 
 @endpoint
+def test_a_deleted_holiday_can_be_added_again(client, org):
+    """Regression. Holidays soft-delete, but the uniqueness rule was a plain
+    UNIQUE, so a deleted row kept holding the date: the handler's
+    `deleted_at IS NULL` lookup found nothing, inserted, and hit a constraint
+    on a row it couldn't see. Removing Christmas and putting it back 500'd.
+    Fixed by making the index partial (migration 0010)."""
+    day = str(_next_weekday(2))
+    first = client.post(
+        "/api/v1/calendar/holidays", json={"day": day, "name": "Founders Day"},
+        headers=org["hr"],
+    ).json()
+    assert client.delete(
+        f"/api/v1/calendar/holidays/{first['id']}", headers=org["hr"]
+    ).status_code == 204
+
+    again = client.post(
+        "/api/v1/calendar/holidays", json={"day": day, "name": "Founders Day"},
+        headers=org["hr"],
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["id"] != first["id"]  # a new row, not the tombstone
+    assert [h["day"] for h in
+            client.get("/api/v1/calendar/holidays", headers=org["hr"]).json()].count(day) == 1
+
+
+@endpoint
 def test_existing_requests_keep_their_original_day_counts(client, org):
     """Billing changed; history didn't. A request already agreed at N days
     stays at N — silently re-deriving the past would be worse than the bug."""

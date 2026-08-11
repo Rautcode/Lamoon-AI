@@ -10,8 +10,12 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "leave.read", "leave.write", "leave.approve",
             "attendance.read", "attendance.write",
             "calendar.write",
+            "payroll.read", "payroll.write",
         }
     ),
+    # manager deliberately has NO payroll.read. Whether a manager may see their
+    # team's pay is a policy call every company answers differently, and the
+    # safe default for the most confidential data in the product is no.
     # manager approves their team's leave but doesn't administer HR data —
     # leave.write (filing a request on someone's behalf) stays HR-only until
     # there's a real ESS flow where employees file their own.
@@ -22,7 +26,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     # employee from the JWT and never accept an id, so an employee physically
     # cannot address anyone else's record. They deliberately have no
     # employee.read: seeing the whole directory is not self-service.
-    "employee": frozenset({"self.read", "self.leave.write", "self.attendance.write"}),
+    "employee": frozenset(
+        {"self.read", "self.leave.write", "self.attendance.write", "self.payslip.read"}
+    ),
 }
 
 

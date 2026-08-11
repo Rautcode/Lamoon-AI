@@ -1,4 +1,4 @@
-import { CalendarDays, Clock, Home, Network, User, Users, Briefcase } from "lucide-react";
+import { Banknote, CalendarDays, Clock, Home, Network, User, Users, Briefcase } from "lucide-react";
 import { hasPermission } from "@/lib/auth-store";
 
 /* One source of truth for "which routes does this account get".
@@ -22,6 +22,9 @@ export const NAV: NavItem[] = [
   { href: "/people", label: "People", Icon: Users, need: "employee.read" },
   { href: "/time", label: "Time", Icon: CalendarDays, need: "leave.read" },
   { href: "/attendance", label: "Hours", Icon: Clock, need: "attendance.read" },
+  // HR/admin only. Managers deliberately hold no payroll.read — see
+  // core/auth/permissions.py for why.
+  { href: "/pay", label: "Pay", Icon: Banknote, need: "payroll.read" },
   { href: "/org", label: "Org", Icon: Network, need: "employee.read" },
 ];
 

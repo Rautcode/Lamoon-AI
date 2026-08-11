@@ -15,6 +15,7 @@ from app.modules.auth.routes import router as auth_router
 from app.modules.ess.routes import router as ess_router
 from app.modules.hr_core.routes import router as hr_core_router
 from app.modules.leave.routes import router as leave_router
+from app.modules.payroll.routes import router as payroll_router
 from app.modules.public.routes import router as public_router
 from app.modules.system.routes import router as system_router
 from app.modules.work_calendar.routes import router as work_calendar_router
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(attendance_router, prefix="/api/v1")
     app.include_router(work_calendar_router, prefix="/api/v1")
     app.include_router(leave_router, prefix="/api/v1")
+    app.include_router(payroll_router, prefix="/api/v1")
     app.include_router(ats_router, prefix="/api/v1")
     app.include_router(assistant_router, prefix="/api/v1")
     app.include_router(public_router, prefix="/api/v1")

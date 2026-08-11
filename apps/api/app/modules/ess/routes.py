@@ -34,11 +34,14 @@ from app.modules.hr_core.schemas import EmployeeOut
 from app.modules.leave import service as leave_service
 from app.modules.leave.models import LeaveRequest
 from app.modules.leave.schemas import LeaveBalanceOut, LeaveRequestOut
+from app.modules.payroll import service as payroll_service
+from app.modules.payroll.schemas import PayslipOut
 
 router = APIRouter(prefix="/me", tags=["ess"])
 CAN_READ_SELF = [Depends(require("self.read"))]
 CAN_FILE_LEAVE = [Depends(require("self.leave.write"))]
 CAN_PUNCH = [Depends(require("self.attendance.write"))]
+CAN_READ_PAYSLIP = [Depends(require("self.payslip.read"))]
 
 
 def _me(db: Session, principal: Principal) -> Employee:
@@ -181,3 +184,21 @@ def my_attendance(
     return attendance_service.summaries_for(
         db, me.id, policy, today - timedelta(days=days - 1), today
     )
+
+
+# --- payslips ---------------------------------------------------------------
+
+
+@router.get("/payslips", response_model=list[PayslipOut], dependencies=CAN_READ_PAYSLIP)
+def my_payslips(
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
+    _cid: str = Depends(resolve_tenant),
+):
+    """Own payslips, FINALIZED runs only.
+
+    A draft payslip is a figure HR is still working on — an employee seeing
+    one would be reading a number that is about to change. The finalized
+    filter lives in the payroll service, not in this handler, so no other
+    caller can forget it."""
+    return payroll_service.finalized_payslips_for(db, _me(db, principal).id)

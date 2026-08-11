@@ -4,7 +4,7 @@ User is tenant-scoped (TenantBase → RLS)."""
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,7 +27,12 @@ class Company(Base):
 
 class User(TenantBase):
     __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("company_id", "email", name="uq_user_email"),)
+    # Partial: a soft-deleted user releases the address, so re-inviting
+    # someone whose login was removed works (migration 0010).
+    __table_args__ = (
+        Index("uq_user_email", "company_id", "email", unique=True,
+              postgresql_where=text("deleted_at IS NULL")),
+    )
     email: Mapped[str] = mapped_column(String(200), index=True)
     # password_hash: null if OAuth-only
     password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)

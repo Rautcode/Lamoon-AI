@@ -90,6 +90,7 @@ lookup. The loop is bounded to 3 steps so a confused model can't spin.
     /time                  Leave — decisions first, then history
     /attendance            Presence now + a 14-day hours heatmap
                              (weekends/holidays marked, not blank)
+    /pay                   Payroll runs. HR/admin only — NOT managers
     /org                   Department tree + unassigned people
 ```
 
@@ -99,7 +100,7 @@ source of truth feeds both the rail and the route guard, so a link can never
 appear that the guard would bounce.
 
 Every additional top-level item is a tax on the product's clarity; modules
-that arrive later (payroll, performance) should earn their slot or live
+that arrive later (performance, learning) should earn their slot or live
 inside an existing one.
 
 ### Home is not a dashboard
@@ -283,7 +284,17 @@ custom property are never out of sync by name.
 
 Honesty about scope matters more than a complete-looking spec:
 
-- **Payroll, performance, LMS, assets, documents** — no API exists for
+- **Income tax (TDS) computation.** Payroll computes PF, ESI and professional
+  tax; it does NOT compute income tax. Doing that properly needs regime
+  election, investment declarations and the proofs behind them — a subsystem
+  that doesn't exist here. TDS is an input, entered from what the employer's
+  accountant advises, and the UI says so on the screen where it's typed.
+  Half-computing it would produce authoritative-looking numbers that are
+  wrong, and the employer wears the penalty for short deduction.
+- **Also not in payroll:** gratuity, statutory bonus, labour welfare fund,
+  bank/NEFT export, arrears, reimbursements, half-days, and effective-dated
+  salary revisions (a raise overwrites; history survives in frozen payslips).
+- **Performance, LMS, assets, documents** — no API exists for
   these. The employee profile shows only real sections rather than
   greyed-out panels promising features that don't exist.
 - **Shifts, overtime rules, geofenced or biometric punching.** The ledger

@@ -10,7 +10,7 @@ Named `work_calendar`, not `calendar`, so it can't shadow the stdlib module.
 """
 from datetime import date
 
-from sqlalchemy import Date, String, UniqueConstraint
+from sqlalchemy import Date, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.models import TenantBase
@@ -34,8 +34,11 @@ class Holiday(TenantBase):
     __tablename__ = "holidays"
     __table_args__ = (
         # Per company, one entry per date — re-adding Diwali shouldn't create
-        # a duplicate that double-discounts a leave request.
-        UniqueConstraint("company_id", "day", name="uq_holiday_company_day"),
+        # a duplicate that double-discounts a leave request. PARTIAL: a
+        # soft-deleted holiday must release the date, or re-adding one you
+        # removed 500s (migration 0010).
+        Index("uq_holiday_company_day", "company_id", "day", unique=True,
+              postgresql_where=text("deleted_at IS NULL")),
     )
 
     day: Mapped[date] = mapped_column(Date, index=True)

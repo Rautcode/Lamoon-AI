@@ -13,6 +13,10 @@ import type {
   LeaveType,
   Me,
   NewDepartment,
+  PayrollRun,
+  PayrollRunDetail,
+  PayrollSettings,
+  Payslip,
   Presence,
   WorkWeek,
   NewEmployee,
@@ -121,6 +125,9 @@ export const api = {
       end_date: string;
       reason?: string;
     }) => request<LeaveRequest>("/me/leave/requests", { method: "POST", body: JSON.stringify(body) }),
+    /** Finalized runs only — the server filters, so a draft can never reach
+     *  an employee as if it were their pay. */
+    payslips: () => request<Payslip[]>("/me/payslips"),
   },
   departments: {
     list: () => request<Department[]>("/hr/departments"),
@@ -179,6 +186,24 @@ export const api = {
     /** Everyone x N days in one call — the heatmap would otherwise be N+1. */
     summary: (days = 14) => request<EmployeeAttendance[]>(`/attendance/summary?days=${days}`),
     policy: () => request<AttendancePolicy>("/attendance/policy"),
+  },
+  payroll: {
+    runs: () => request<PayrollRun[]>("/payroll/runs"),
+    run: (id: string) => request<PayrollRunDetail>(`/payroll/runs/${id}`),
+    /** Opens the month's draft, or recomputes it if one is already open. */
+    compute: (period: string) =>
+      request<PayrollRunDetail>("/payroll/runs", {
+        method: "POST",
+        body: JSON.stringify({ period }),
+      }),
+    adjust: (runId: string, payslipId: string, patch: { lop_days?: number; tds?: string }) =>
+      request<Payslip>(`/payroll/runs/${runId}/payslips/${payslipId}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }),
+    finalize: (id: string) =>
+      request<PayrollRun>(`/payroll/runs/${id}/finalize`, { method: "POST" }),
+    settings: () => request<PayrollSettings>("/payroll/settings"),
   },
   jobs: {
     list: () => request<Job[]>("/ats/jobs"),

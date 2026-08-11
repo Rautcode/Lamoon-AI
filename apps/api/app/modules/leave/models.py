@@ -13,7 +13,7 @@ already-acknowledged module this doesn't build.
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,6 +24,9 @@ class LeaveType(TenantBase):
     __tablename__ = "leave_types"
     name: Mapped[str] = mapped_column(String(100))
     annual_quota: Mapped[int] = mapped_column(Integer)  # days/year, same for every employee in V1
+    #: Unpaid leave becomes loss of pay in the payroll run. Defaults True so
+    #: adding this flag can't retroactively dock anyone for leave already taken.
+    paid: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class LeaveRequest(TenantBase):

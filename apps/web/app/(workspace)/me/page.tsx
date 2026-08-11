@@ -33,6 +33,43 @@ function hoursLabel(minutes: number): string {
   return h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
 }
 
+/** ₹ with Indian digit grouping, from a decimal STRING. Amounts come from
+    NUMERIC columns; parsing them into a JS number to format them would
+    reintroduce exactly the float error the backend avoids. */
+function rupees(amount: string): string {
+  const [whole, paise = "00"] = amount.split(".");
+  const sign = whole.startsWith("-") ? "-" : "";
+  const digits = whole.replace("-", "");
+  const last3 = digits.slice(-3);
+  const rest = digits.slice(0, -3);
+  const grouped = rest ? `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",")},${last3}` : last3;
+  return `${sign}₹${grouped}${paise === "00" ? "" : `.${paise}`}`;
+}
+
+function payMonth(period: string): string {
+  return new Date(period + "T00:00:00").toLocaleDateString([], {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function PayLines({ lines }: { lines: { code: string; name: string; amount: string }[] }) {
+  const shown = lines.filter((l) => l.amount !== "0" && l.amount !== "0.00");
+  if (!shown.length) return <p className="t-meta">None</p>;
+  return (
+    <table className="w-full">
+      <tbody>
+        {shown.map((l) => (
+          <tr key={l.code}>
+            <td className="py-1 pr-4 text-[0.8125rem]">{l.name}</td>
+            <td className="py-1 text-right text-[0.8125rem] tabular-nums">{rupees(l.amount)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function clockTime(iso: string | null): string {
   return iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
 }
@@ -92,6 +129,11 @@ export default function MePage() {
     queryKey: ["self-today"],
     queryFn: api.self.attendanceToday,
   });
+  const { data: payslips } = useQuery({
+    queryKey: ["self-payslips"],
+    queryFn: api.self.payslips,
+  });
+  const [openSlip, setOpenSlip] = useState<string | null>(null);
 
   const [punchError, setPunchError] = useState<string | null>(null);
   const punch = useMutation({
@@ -332,6 +374,63 @@ export default function MePage() {
                   </span>
                 </span>
                 <span className="shrink-0 text-[0.75rem] text-[var(--ink-3)]">{r.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* --- Payslips --------------------------------------------------------
+          Finalized runs only; the server enforces that, not this component. */}
+      <section style={{ "--i": 4 } as React.CSSProperties} className="mt-12">
+        <SectionLabel>Payslips</SectionLabel>
+        {!payslips || payslips.length === 0 ? (
+          <p className="t-meta">
+            No payslips yet. They appear here once payroll for a month is finalized.
+          </p>
+        ) : (
+          <div className="-mx-3">
+            {payslips.map((p) => (
+              <div key={p.id}>
+                <button
+                  onClick={() => setOpenSlip(openSlip === p.id ? null : p.id)}
+                  aria-expanded={openSlip === p.id}
+                  className="flex w-full items-center gap-4 rounded-[10px] px-3 py-3 text-left hover:bg-[var(--surface-1)]"
+                >
+                  <span className="min-w-0 flex-1 text-[0.875rem]">
+                    {payMonth(p.period)}
+                    <span className="text-[var(--ink-3)]">
+                      {" · "}
+                      {p.paid_days}/{p.working_days} days
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[0.875rem] tabular-nums">{rupees(p.net)}</span>
+                </button>
+                {openSlip === p.id && (
+                  <div className="mx-3 mb-3 grid gap-5 rounded-2xl bg-[var(--surface-1)] p-4 sm:grid-cols-3">
+                    <div>
+                      <SectionLabel>Earnings</SectionLabel>
+                      <PayLines lines={p.breakdown.earnings} />
+                      <p className="mt-2 border-t border-[var(--hairline)] pt-2 text-[0.8125rem] font-medium tabular-nums">
+                        Gross {rupees(p.gross)}
+                      </p>
+                    </div>
+                    <div>
+                      <SectionLabel>Deductions</SectionLabel>
+                      <PayLines lines={p.breakdown.deductions} />
+                      <p className="mt-2 border-t border-[var(--hairline)] pt-2 text-[0.8125rem] font-medium tabular-nums">
+                        Total {rupees(p.deductions)}
+                      </p>
+                    </div>
+                    <div>
+                      <SectionLabel>Paid on your behalf</SectionLabel>
+                      <PayLines lines={p.breakdown.employer_contributions} />
+                      <p className="t-meta mt-2 border-t border-[var(--hairline)] pt-2">
+                        Contributed by your employer, not deducted from your pay.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
