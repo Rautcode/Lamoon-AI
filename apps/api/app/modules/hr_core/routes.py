@@ -20,7 +20,14 @@ from app.core.tenant import resolve_tenant
 from app.modules.audit import service as audit
 from app.modules.auth.models import Company, User
 from app.modules.hr_core.models import Department, Employee
-from app.modules.hr_core.schemas import DepartmentIn, DepartmentOut, EmployeeIn, EmployeeOut
+from app.modules.hr_core.schemas import (
+    DepartmentIn,
+    DepartmentOut,
+    DepartmentUpdate,
+    EmployeeIn,
+    EmployeeOut,
+    EmployeeUpdate,
+)
 
 # ponytail: add dependencies=[Depends(entitlements.require_module("hr_core"))] once
 # a generic module-flags table exists — "employees" (seat limit) is wired below.
@@ -45,11 +52,15 @@ def list_departments(db: Session = Depends(get_db)):
 
 
 @router.patch("/departments/{department_id}", response_model=DepartmentOut, dependencies=CAN_WRITE)
-def update_department(department_id: uuid.UUID, body: DepartmentIn, db: Session = Depends(get_db)):
+def update_department(
+    department_id: uuid.UUID, body: DepartmentUpdate, db: Session = Depends(get_db)
+):
     dept = db.get(Department, department_id)
     if dept is None:
         raise HTTPException(404, "not found")
-    for k, v in body.model_dump().items():
+    # exclude_unset: write only what the caller actually sent. Without it, an
+    # omitted field arrives as its default and overwrites a real value.
+    for k, v in body.model_dump(exclude_unset=True).items():
         setattr(dept, k, v)
     db.flush()
     return dept
@@ -163,7 +174,7 @@ def get_employee(employee_id: uuid.UUID, db: Session = Depends(get_db)):
 
 
 @router.patch("/employees/{employee_id}", response_model=EmployeeOut, dependencies=CAN_WRITE)
-def update_employee(employee_id: uuid.UUID, body: EmployeeIn, db: Session = Depends(get_db)):
+def update_employee(employee_id: uuid.UUID, body: EmployeeUpdate, db: Session = Depends(get_db)):
     # ponytail: reactivating an 'exited' employee back to 'active'/'probation'
     # here doesn't re-check the seat limit (only create_employee does). Real
     # gap if re-hiring via PATCH becomes a common flow; fine for now since
@@ -171,7 +182,11 @@ def update_employee(employee_id: uuid.UUID, body: EmployeeIn, db: Session = Depe
     emp = db.get(Employee, employee_id)
     if emp is None or emp.deleted_at is not None:
         raise HTTPException(404, "not found")
-    for k, v in body.model_dump().items():
+    # exclude_unset is what makes this a PATCH. It previously wrote every
+    # field, so renaming someone erased their email, department and joining
+    # date and reset an 'exited' employee to 'active' — which put them back
+    # into the next payroll run.
+    for k, v in body.model_dump(exclude_unset=True).items():
         setattr(emp, k, v)
     db.flush()
     return emp
