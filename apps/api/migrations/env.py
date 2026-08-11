@@ -18,6 +18,7 @@ from app.modules.auth import models as _auth_models  # noqa: F401
 from app.modules.hr_core import models as _hr_core_models  # noqa: F401
 from app.modules.leave import models as _leave_models  # noqa: F401
 from app.modules.payroll import models as _payroll_models  # noqa: F401
+from app.modules.payroll import workforce as _payroll_workforce  # noqa: F401
 from app.modules.work_calendar import models as _work_calendar_models  # noqa: F401
 
 config = context.config

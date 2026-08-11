@@ -129,6 +129,11 @@ class ProfessionalTaxSlab(TenantBase):
 
     __tablename__ = "pt_slabs"
 
+    #: The establishment whose state levies this. NULL = a company-wide
+    #: schedule, correct and simplest for a single-state customer.
+    establishment_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("establishments.id"), nullable=True
+    )
     #: Inclusive upper bound of monthly gross. NULL = the top, unbounded slab.
     up_to: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     amount: Mapped[Decimal] = mapped_column(MONEY)

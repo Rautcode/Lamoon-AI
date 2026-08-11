@@ -296,14 +296,12 @@ Honesty about scope matters more than a complete-looking spec:
 - **Also not in payroll:** gratuity, statutory bonus, labour welfare fund,
   bank/NEFT export, arrears, reimbursements, half-days, and effective-dated
   salary revisions (a raise overwrites; history survives in frozen payslips).
-- **A payroll input ledger.** Payroll reads the employee's current salary
-  rather than a set of approved, sourced inputs for the period. That is the
-  next architectural step, and the Control Center is a view over it — building
-  the dashboard first would be a view over data that doesn't exist.
-- **Statutory filing.** No 24Q, ECR or ESI return. Needs PAN/TAN/ESIC numbers
-  that aren't modelled, plus the exact file formats.
-- **Blue-collar and contractor work.** No sites, shifts, daily/hourly wages,
-  overtime or deployment. The engine is monthly-salary shaped.
+- **Statutory filing.** No ECR, 24Q or ESI return, no challan or
+  reconciliation. Payroll computes the liability; it does not discharge it.
+  This is the gap between a payroll calculator and a payroll system.
+- **Contractor workforce.** Work facts carry a site and a shift, but there is
+  no contractor, deployment or invoice-reconciliation model.
+- **F&F and gratuity**, and effective-dated salary structures.
 - **Performance, LMS, assets, documents** — no API exists for
   these. The employee profile shows only real sections rather than
   greyed-out panels promising features that don't exist.

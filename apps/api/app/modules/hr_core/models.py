@@ -56,3 +56,8 @@ class Employee(TenantBase):
     #: International workers are outside the wage ceiling entirely.
     is_international_worker: Mapped[bool] = mapped_column(Boolean, default=False)
     uan: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: Which registered place of business covers this person. Jurisdiction for
+    #: professional tax and minimum wages hangs off this, not off the company.
+    establishment_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("establishments.id"), nullable=True
+    )

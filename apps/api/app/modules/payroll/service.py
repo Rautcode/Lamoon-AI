@@ -28,14 +28,12 @@ from sqlalchemy.orm import Session
 
 from app.modules.hr_core.models import Employee
 from app.modules.leave.models import LeaveRequest, LeaveType
-from app.modules.payroll import rules, statutory
+from app.modules.payroll import ledger, rules, statutory, validation
 from app.modules.payroll.models import (
-    PayComponent,
     PayrollRun,
     PayrollSettings,
     Payslip,
     ProfessionalTaxSlab,
-    SalaryComponent,
 )
 from app.modules.work_calendar import service as work_calendar
 
@@ -224,33 +222,48 @@ def compute_payslip(
     # divide by zero. Treat it as fully paid rather than paying nobody.
     ratio = Decimal(paid_days) / Decimal(working_days) if working_days else Decimal("1")
 
-    rows = db.execute(
-        select(SalaryComponent, PayComponent)
-        .join(PayComponent, PayComponent.id == SalaryComponent.component_id)
-        .where(
-            SalaryComponent.employee_id == employee.id,
-            SalaryComponent.deleted_at.is_(None),
-            PayComponent.deleted_at.is_(None),
-        )
-    ).all()
+    # Payroll asks the ledger what was APPROVED for this period, not what the
+    # employee's salary record says today. A raise on the 20th therefore
+    # changes next month rather than silently rewriting this one.
+    inputs = ledger.inputs_for(db, employee.id, period)
 
     earnings: list[dict] = []
     other_deductions: list[dict] = []
     wage_lines: list[tuple[Decimal, str]] = []
     gross = ZERO
     esi_wage = ZERO
+    entered_tax = ZERO
 
-    for salary, component in sorted(rows, key=lambda r: (r[1].sequence, r[1].name)):
-        amount = statutory.money(salary.amount * ratio)
-        line = {"code": component.code, "name": component.name, "amount": str(amount)}
-        if component.kind == "deduction":
+    for item in inputs:
+        # Overtime is paid for hours actually worked, so it is NOT prorated by
+        # attendance a second time — the hours already encode the attendance.
+        prorate = item.kind == "earning"
+        amount = statutory.money(item.amount * ratio) if prorate else statutory.money(item.amount)
+        line = {"code": item.code, "name": item.name, "amount": str(amount),
+                "source": item.source}
+        if item.quantity is not None and item.rate is not None:
+            line["basis"] = f"{item.quantity} x {item.rate}"
+
+        if item.kind == "tax":
+            entered_tax += amount
+            continue
+        if item.kind in ("deduction", "lop", "adjustment") and item.kind != "adjustment":
             other_deductions.append(line)
             continue
+        if item.kind == "adjustment":
+            (earnings if amount >= ZERO else other_deductions).append(line)
+            if amount >= ZERO:
+                gross += amount
+                wage_lines.append((amount, item.wage_basis))
+            continue
+
         earnings.append(line)
         gross += amount
-        wage_lines.append((amount, component.wage_basis))
-        if component.esi_wage:
-            esi_wage += amount
+        wage_lines.append((amount, item.wage_basis))
+        # Nearly all earnings count toward ESI gross wages; overtime is
+        # excluded when deciding COVERAGE but included once covered, which the
+        # ceiling test below handles by using the wage at structure level.
+        esi_wage += amount
 
     # The statutory wage is DERIVED, not nominated. From 21 Nov 2025 an
     # employer can't shrink their PF liability by moving pay into allowances:
@@ -296,7 +309,7 @@ def compute_payslip(
     )
     pt = statutory.professional_tax(gross, pt_slabs(db))
 
-    statutory_deductions = pf["employee"] + esi_amounts["employee"] + pt + tds
+    statutory_deductions = pf["employee"] + esi_amounts["employee"] + pt + tds + entered_tax
     manual = sum(Decimal(d["amount"]) for d in other_deductions)
     deductions = statutory.money(statutory_deductions + manual)
     net = statutory.money(gross - deductions)
@@ -391,9 +404,31 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
     admin_charged = ZERO
     contributing_members = 0
 
+    # The ledger is regenerated from salary structures and approved work facts
+    # before anything is computed. Manual entries and adjustments survive.
+    cal = work_calendar.get_calendar(db, company_id)
+    holidays = set(work_calendar.holidays_between(db, *month_bounds(run.period)))
+    month_working_days = work_calendar.count_working_days(
+        *month_bounds(run.period), cal.working_days, holidays
+    )
+    for employee in employees:
+        if employee.joined_on and employee.joined_on > end:
+            continue
+        ledger.rebuild(
+            db, company_id=company_id, employee=employee, period=run.period,
+            working_days=month_working_days,
+        )
+
+    # Validation decides who can be calculated at all. Someone with no inputs
+    # is EXCLUDED and named, never paid a number nobody can defend.
+    findings = validation.validate(db, company_id=company_id, period=run.period)
+    blocked = validation.blocking_employee_ids(findings)
+
     for employee in employees:
         # Not on the payroll for a month that ended before they joined.
         if employee.joined_on and employee.joined_on > end:
+            continue
+        if employee.id in blocked:
             continue
         prior = existing.get(employee.id)
         lop = lop_for(
