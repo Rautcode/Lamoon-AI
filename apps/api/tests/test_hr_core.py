@@ -22,7 +22,8 @@ def _db_up() -> bool:
 pytestmark = pytest.mark.skipif(not _db_up(), reason="Postgres not reachable")
 
 
-def test_department_and_employee_crud(client, headers):
+def test_department_and_employee_crud(client, own_company):
+    headers = own_company["headers"]
     r = client.post("/api/v1/hr/departments", json={"name": "Engineering"}, headers=headers)
     assert r.status_code == 200, r.text
     dept_id = r.json()["id"]
@@ -108,9 +109,33 @@ def test_role_without_permission_is_denied(client, headers):
 
 
 @pytest.fixture
-def person(client, headers):
+def own_company(client):
+    """A throwaway tenant.
+
+    These tests create employees and don't delete them, so running them
+    against the shared `acme` company leaks a seat per test until the 25-seat
+    entitlement trips and the whole file starts failing. Every other suite
+    here bootstraps its own company for exactly this reason.
+    """
+    sub = f"hrc-{uuid.uuid4().hex[:8]}"
+    email = f"admin@{sub}.test"
+    client.post(
+        "/api/v1/auth/bootstrap",
+        json={"company_name": "HR Co", "subdomain": sub, "email": email,
+              "password": "pw123456"},
+    )
+    tok = client.post(
+        "/api/v1/auth/login",
+        json={"company": sub, "email": email, "password": "pw123456"},
+    ).json()
+    return {"sub": sub, "headers": {"Authorization": f"Bearer {tok['access_token']}"}}
+
+
+@pytest.fixture
+def person(client, own_company):
     """An employee with every optional field populated, so a partial PATCH has
     something to destroy."""
+    headers = own_company["headers"]
     dept = client.post(
         "/api/v1/hr/departments", json={"name": f"Dept-{uuid.uuid4().hex[:6]}"}, headers=headers
     ).json()
@@ -118,17 +143,18 @@ def person(client, headers):
         "/api/v1/hr/employees",
         json={
             "full_name": "Original Name",
-            "email": f"orig-{uuid.uuid4().hex[:6]}@acme.test",
+            "email": f"orig-{uuid.uuid4().hex[:6]}@{own_company['sub']}.test",
             "department_id": dept["id"],
             "status": "probation",
             "joined_on": "2020-01-15",
         },
         headers=headers,
     ).json()
-    return {"employee": emp, "department": dept}
+    return {"employee": emp, "department": dept, "headers": headers}
 
 
-def test_patching_one_field_leaves_the_others_alone(client, headers, person):
+def test_patching_one_field_leaves_the_others_alone(client, person):
+    headers = person["headers"]
     emp = person["employee"]
     r = client.patch(
         f"/api/v1/hr/employees/{emp['id']}", json={"full_name": "Renamed"}, headers=headers
@@ -143,7 +169,8 @@ def test_patching_one_field_leaves_the_others_alone(client, headers, person):
     assert after["status"] == "probation"
 
 
-def test_patch_does_not_resurrect_an_exited_employee(client, headers, person):
+def test_patch_does_not_resurrect_an_exited_employee(client, person):
+    headers = person["headers"]
     """The costly version of the bug: `status` is how a payroll run excludes
     leavers, so a rename that reset it to 'active' put a departed person back
     on the payroll."""
@@ -157,7 +184,8 @@ def test_patch_does_not_resurrect_an_exited_employee(client, headers, person):
     assert after["status"] == "exited"
 
 
-def test_patch_can_still_clear_a_field_with_an_explicit_null(client, headers, person):
+def test_patch_can_still_clear_a_field_with_an_explicit_null(client, person):
+    headers = person["headers"]
     """Omitted and null must mean different things, or there's no way to
     un-assign someone from a department."""
     emp = person["employee"]
@@ -168,7 +196,8 @@ def test_patch_can_still_clear_a_field_with_an_explicit_null(client, headers, pe
     assert after["full_name"] == "Original Name"  # untouched
 
 
-def test_patch_accepts_a_body_without_full_name(client, headers, person):
+def test_patch_accepts_a_body_without_full_name(client, person):
+    headers = person["headers"]
     """This is how the bug was found: PATCHing only an email 422'd, because
     the create schema required full_name."""
     emp = person["employee"]
@@ -180,7 +209,8 @@ def test_patch_accepts_a_body_without_full_name(client, headers, person):
     assert r.json()["full_name"] == "Original Name"
 
 
-def test_patch_rejects_an_explicit_null_name(client, headers, person):
+def test_patch_rejects_an_explicit_null_name(client, person):
+    headers = person["headers"]
     """Optional-for-PATCH must not mean nullable — the column isn't."""
     r = client.patch(
         f"/api/v1/hr/employees/{person['employee']['id']}",
@@ -189,7 +219,8 @@ def test_patch_rejects_an_explicit_null_name(client, headers, person):
     assert r.status_code == 422
 
 
-def test_patching_a_department_leaves_its_parent_alone(client, headers, person):
+def test_patching_a_department_leaves_its_parent_alone(client, person):
+    headers = person["headers"]
     """Same bug, same shape, on the other PATCH handler."""
     parent = client.post(
         "/api/v1/hr/departments", json={"name": f"Parent-{uuid.uuid4().hex[:6]}"}, headers=headers
@@ -228,7 +259,8 @@ def test_update_schemas_cover_every_creatable_field():
         assert not required, f"{model.__name__} still requires {required}"
 
 
-def test_patch_rejects_an_explicit_null_status(client, headers, person):
+def test_patch_rejects_an_explicit_null_status(client, person):
+    headers = person["headers"]
     r = client.patch(
         f"/api/v1/hr/employees/{person['employee']['id']}",
         json={"status": None}, headers=headers,

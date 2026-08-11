@@ -323,9 +323,16 @@ def adjust_payslip(
     if body.tds is not None:
         slip.tds = body.tds
 
+    # Resolve unpaid days the same way a run does, rather than reusing the
+    # stored total. Passing the stored value back was the bug: it already
+    # included the pre-joining shortfall, which then got added a second time,
+    # so editing only the TDS on a mid-month joiner zeroed their pay.
+    lop = service.lop_for(
+        db, company_id=company_id, employee=employee, period=run.period, prior=slip
+    )
     computed = service.compute_payslip(
         db, company_id=company_id, employee=employee, period=run.period,
-        lop_days=slip.lop_days, tds=slip.tds,
+        lop_days=lop, tds=slip.tds,
     )
     for field in (
         "employee_name", "period", "working_days", "paid_days", "lop_days",

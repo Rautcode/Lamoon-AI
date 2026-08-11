@@ -13,6 +13,35 @@ from app.core.notify.base import outbox
 from tests.conftest import make_pdf
 
 
+@pytest.fixture
+def own_company(client):
+    """A throwaway tenant.
+
+    Applications dedup by resume SHA-256, and `make_pdf` is only incidentally
+    unique per call (the PDF carries a creation timestamp with one-second
+    resolution). Against a database that persists between runs, two runs
+    landing in the same second dedup to the existing candidate, `is_new
+    _candidate` is False, and the bad-resume path never fires. The dedup
+    lookup is RLS-scoped, so a fresh company can never have seen the resume
+    before — which makes these tests deterministic on any database, not just
+    a clean one.
+    """
+    import uuid as _uuid
+
+    sub = f"ats-{_uuid.uuid4().hex[:8]}"
+    email = f"admin@{sub}.test"
+    client.post(
+        "/api/v1/auth/bootstrap",
+        json={"company_name": "ATS Co", "subdomain": sub, "email": email,
+              "password": "pw123456"},
+    )
+    tok = client.post(
+        "/api/v1/auth/login",
+        json={"company": sub, "email": email, "password": "pw123456"},
+    ).json()
+    return {"Authorization": f"Bearer {tok['access_token']}"}
+
+
 def _db_up() -> bool:
     try:
         with engine.connect() as c:
@@ -25,7 +54,8 @@ def _db_up() -> bool:
 pytestmark = pytest.mark.skipif(not _db_up(), reason="Postgres not reachable")
 
 
-def test_full_flow(client, headers):
+def test_full_flow(client, own_company):
+    headers = own_company
     outbox.clear()
 
     # 1. create a job
@@ -87,7 +117,8 @@ def test_full_flow(client, headers):
     assert len([m for m in outbox if m["template"] == "application_received"]) == 2
 
 
-def test_bad_resume_alerts_hr(client, headers):
+def test_bad_resume_alerts_hr(client, own_company):
+    headers = own_company
     outbox.clear()
     # An empty PDF (no text layer) → extraction yields nothing → "bad resume" path.
     empty_pdf = make_pdf("")

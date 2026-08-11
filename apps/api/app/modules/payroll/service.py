@@ -144,6 +144,56 @@ def finalized_payslips_for(db: Session, employee_id: uuid.UUID) -> list[Payslip]
     )
 
 
+def pre_joining_days(db: Session, company_id: uuid.UUID, employee: Employee, period: date) -> int:
+    """Working days in the month before this person joined — days they simply
+    aren't owed. Derived from `joined_on` every time, never stored on its own."""
+    if not employee.joined_on:
+        return 0
+    start, end = month_bounds(period)
+    if employee.joined_on <= start:
+        return 0
+
+    cal = work_calendar.get_calendar(db, company_id)
+    holidays = set(work_calendar.holidays_between(db, start, end))
+    working_days = work_calendar.count_working_days(start, end, cal.working_days, holidays)
+    if employee.joined_on > end:
+        return working_days  # not on the payroll for any of this month
+    payable = work_calendar.count_working_days(
+        employee.joined_on, end, cal.working_days, holidays
+    )
+    return working_days - payable
+
+
+def derive_lop(db: Session, *, company_id: uuid.UUID, employee: Employee, period: date) -> int:
+    """The system's view of total unpaid days: approved unpaid leave plus any
+    days before joining.
+
+    THE single place unpaid days are derived. It previously happened inside
+    `compute_payslip`, which *added* the pre-joining shortfall to whatever
+    `lop_days` it was handed — so feeding a stored total back in counted the
+    shortfall twice. A mid-month joiner's pay silently collapsed to zero the
+    first time anyone edited their TDS.
+    """
+    start, end = month_bounds(period)
+    return unpaid_leave_days(db, employee.id, start, end) + pre_joining_days(
+        db, company_id, employee, period
+    )
+
+
+def lop_for(
+    db: Session, *, company_id: uuid.UUID, employee: Employee, period: date, prior: Payslip | None
+) -> int:
+    """Unpaid days for a (re)computation, honouring a human's correction.
+
+    An overridden figure is the TOTAL, taken as final — the person typing it is
+    looking at the number the payslip displays, and nothing further is added to
+    it. Otherwise the system derives it fresh, so a recompute is idempotent.
+    """
+    if prior is not None and prior.lop_overridden:
+        return prior.lop_days
+    return derive_lop(db, company_id=company_id, employee=employee, period=period)
+
+
 def compute_payslip(
     db: Session,
     *,
@@ -157,21 +207,16 @@ def compute_payslip(
 
     Returned rather than written so the same code path serves a preview and a
     saved draft, and so it can be tested without a run row.
+
+    `lop_days` is the FINAL total of unpaid days, including any pre-joining
+    days — this function adds nothing to it. That is what makes it a pure
+    function of its arguments, and therefore idempotent: feeding its own output
+    back in produces the same result. Use `lop_for()` to obtain the value.
     """
     start, end = month_bounds(period)
     cal = work_calendar.get_calendar(db, company_id)
     holidays = set(work_calendar.holidays_between(db, start, end))
     working_days = work_calendar.count_working_days(start, end, cal.working_days, holidays)
-
-    # Someone who joined mid-month isn't owed the days before they joined.
-    if employee.joined_on and employee.joined_on > start:
-        if employee.joined_on > end:
-            working_days_payable = 0
-        else:
-            working_days_payable = work_calendar.count_working_days(
-                employee.joined_on, end, cal.working_days, holidays
-            )
-        lop_days += working_days - working_days_payable
 
     lop_days = max(0, min(lop_days, working_days))
     paid_days = working_days - lop_days
@@ -284,7 +329,7 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
     if run.status == "finalized":
         raise RunFinalized("this run is finalized and cannot be recomputed")
 
-    start, end = month_bounds(run.period)
+    _, end = month_bounds(run.period)
     employees = db.scalars(
         select(Employee).where(Employee.status != "exited", Employee.deleted_at.is_(None))
     ).all()
@@ -302,10 +347,8 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
         if employee.joined_on and employee.joined_on > end:
             continue
         prior = existing.get(employee.id)
-        lop = (
-            prior.lop_days
-            if prior is not None and prior.lop_overridden
-            else unpaid_leave_days(db, employee.id, start, end)
+        lop = lop_for(
+            db, company_id=company_id, employee=employee, period=run.period, prior=prior
         )
         tds = prior.tds if prior is not None else ZERO
 
