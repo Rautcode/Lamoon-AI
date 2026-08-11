@@ -273,3 +273,121 @@ def test_an_unknown_wage_basis_is_rejected(client, org):
                     json={"code": "JUNK", "name": "Junk", "wage_basis": "whatever"},
                     headers=org["hr"])
     assert r.status_code == 422
+
+
+# --- EPS applicability ------------------------------------------------------
+#
+# The engine used to compute pension for everybody, because it had no date of
+# birth and no EPF-membership date to decide otherwise.
+
+
+def _eps(**kw):
+    from app.modules.payroll.rules import eps_decision
+    base = dict(period=date(2026, 9, 1), rule=epf_rule_for(date(2026, 9, 1)),
+                pf_wage=D("20000"), ceiling=D("15000"))
+    return eps_decision(**{**base, **kw})
+
+
+def test_eps_stops_at_58():
+    joined = date(2000, 1, 1)
+    assert _eps(date_of_birth=date(1968, 1, 1), pf_first_joined_on=joined).eligible is False
+    assert _eps(date_of_birth=date(1990, 1, 1), pf_first_joined_on=joined).eligible is True
+
+
+def test_eps_age_boundary_is_the_birthday_not_the_year():
+    rule_period = date(2026, 9, 1)
+    turns_58_later = date(1968, 9, 2)   # 57 on 1 Sep 2026
+    turned_58_today = date(1968, 9, 1)
+    assert _eps(period=rule_period, date_of_birth=turns_58_later,
+                pf_first_joined_on=date(2000, 1, 1)).eligible is True
+    assert _eps(period=rule_period, date_of_birth=turned_58_today,
+                pf_first_joined_on=date(2000, 1, 1)).eligible is False
+
+
+def test_a_first_time_member_after_2014_above_the_ceiling_gets_no_eps():
+    """Their employer's whole 12% goes to EPF instead."""
+    d = _eps(date_of_birth=date(1995, 1, 1), pf_first_joined_on=date(2020, 6, 1),
+             pf_wage=D("20000"))
+    assert d.eligible is False
+    assert "2014" in d.reason
+
+
+def test_a_long_standing_member_keeps_eps_above_the_ceiling():
+    """The exclusion turns on FIRST membership, so changing employer doesn't
+    strip an existing member of their pension."""
+    assert _eps(date_of_birth=date(1990, 1, 1), pf_first_joined_on=date(2010, 4, 1),
+                pf_wage=D("80000")).eligible is True
+
+
+def test_a_first_time_member_at_or_below_the_ceiling_still_joins_eps():
+    assert _eps(date_of_birth=date(1995, 1, 1), pf_first_joined_on=date(2020, 6, 1),
+                pf_wage=D("15000")).eligible is True
+
+
+def test_missing_dates_keep_eps_running_and_say_so():
+    """Under-remitting to EPS is the more harmful error, so an incomplete
+    record must not silently stop contributions."""
+    d = _eps()
+    assert d.eligible is True
+    assert "not on record" in d.reason
+
+
+@endpoint
+def test_an_ineligible_employee_gets_the_whole_employer_share_in_epf(client, org):
+    emp = client.post(
+        "/api/v1/hr/employees",
+        json={"full_name": "Senior Person", "date_of_birth": "1965-01-01",
+              "pf_first_joined_on": "2000-01-01"},
+        headers=org["hr"],
+    ).json()
+    client.put(
+        f"/api/v1/payroll/employees/{emp['id']}/salary",
+        json={"components": [{"component_id": org["comps"]["BASIC"]["id"],
+                              "amount": "20000.00"}]},
+        headers=org["hr"],
+    )
+    run = client.post("/api/v1/payroll/runs", json={"period": "2026-09-01"},
+                      headers=org["hr"]).json()
+    slip = next(p for p in run["payslips"] if p["employee_name"] == "Senior Person")
+
+    er = {d["code"]: D(d["amount"]) for d in slip["breakdown"]["employer_contributions"]}
+    ee = {d["code"]: D(d["amount"]) for d in slip["breakdown"]["deductions"]}
+    assert er["EPS_ER"] == D("0")
+    assert er["EPF_ER"] == ee["EPF"]           # the whole 12%, still reconciling
+    assert "58" in slip["breakdown"]["basis"]["eps"]
+
+
+@endpoint
+def test_employer_only_charges_appear_and_are_not_deducted_from_pay(client, org):
+    _employee_with(client, org, "Charged", {"BASIC": "20000.00"})
+    run = client.post("/api/v1/payroll/runs", json={"period": "2026-09-01"},
+                      headers=org["hr"]).json()
+    slip = next(p for p in run["payslips"] if p["employee_name"] == "Charged")
+
+    er = {d["code"]: D(d["amount"]) for d in slip["breakdown"]["employer_contributions"]}
+    assert er["EDLI_ER"] == D("75")     # 0.5% of the 15,000 capped wage
+    assert er["ADMIN_ER"] == D("75")
+    # Employer-only: they raise cost to company, never the employee's deduction.
+    ded = {d["code"] for d in slip["breakdown"]["deductions"]}
+    assert "EDLI_ER" not in ded and "ADMIN_ER" not in ded
+    assert D(slip["net"]) == D(slip["gross"]) - D(slip["deductions"])
+
+
+@endpoint
+def test_tds_records_where_the_figure_came_from(client, org):
+    _employee_with(client, org, "Taxed", {"BASIC": "40000.00"})
+    run = client.post("/api/v1/payroll/runs", json={"period": "2026-09-01"},
+                      headers=org["hr"]).json()
+    slip = next(p for p in run["payslips"] if p["employee_name"] == "Taxed")
+
+    out = client.patch(
+        f"/api/v1/payroll/runs/{run['id']}/payslips/{slip['id']}",
+        json={"tds": "4850.00", "tds_source": "Customer CA",
+              "tds_tax_year": "2026-27", "tds_note": "Old regime, proofs pending"},
+        headers=org["hr"],
+    ).json()
+    assert D(out["tds"]) == D("4850")
+    assert out["tds_source"] == "Customer CA"
+    assert out["tds_tax_year"] == "2026-27"
+    assert out["tds_note"] == "Old regime, proofs pending"
+    assert out["tds_provided_at"] is not None

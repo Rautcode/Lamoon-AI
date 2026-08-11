@@ -69,7 +69,7 @@ def test_employer_and_employee_pf_always_reconcile():
 def test_no_pf_wage_means_no_contribution():
     pf = provident_fund(D("0"), ceiling=D("15000"), rule=EPF)
     assert pf == {"employee": D("0"), "employer_epf": D("0"), "employer_eps": D("0"),
-                  "wage": D("0")}
+                  "employer_edli": D("0"), "employer_admin": D("0"), "wage": D("0")}
 
 
 def test_esi_applies_below_the_ceiling_and_rounds_up():
@@ -211,7 +211,11 @@ def test_a_run_computes_gross_statutory_and_net(client, org):
                 slip["breakdown"]["employer_contributions"]}
     assert employer["EPS_ER"] == D("1250")
     assert employer["EPF_ER"] == D("550")
-    assert Decimal(slip["employer_cost"]) == D("30000") + D("1800")
+    # Employer-only charges on top of the 12%: EDLI and admin, each 0.5% of the
+    # ₹15,000 PF wage. Leaving them out understated cost-to-company by ~1%.
+    assert employer["EDLI_ER"] == D("75")
+    assert employer["ADMIN_ER"] == D("75")
+    assert Decimal(slip["employer_cost"]) == D("30000") + D("1800") + D("75") + D("75")
 
 
 @endpoint

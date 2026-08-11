@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -152,8 +153,13 @@ class PayrollRun(TenantBase):
     gross_total: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
     deductions_total: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
     net_total: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
-    #: Gross + employer PF + employer ESI. What the month actually costs.
+    #: Gross + employer contributions + `admin_shortfall`. What the month costs.
     employer_cost_total: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    #: Top-up to reach the EPF administration minimum, which is levied per
+    #: ESTABLISHMENT per month. Not attributable to any employee, so it lives
+    #: here rather than being smeared across payslips where it would break each
+    #: payslip's own arithmetic.
+    admin_shortfall: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
 
 
 class Payslip(TenantBase):
@@ -185,6 +191,18 @@ class Payslip(TenantBase):
     #: Income tax is NOT computed here — see statutory.py. This is what the
     #: employer (in practice, their CA) says to deduct.
     tds: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    #: ...and where that figure came from. Six months on, somebody will ask why
+    #: ₹4,850 was deducted, and "because it was typed in" is not an answer. A
+    #: bare amount with no provenance is not auditable.
+    tds_source: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tds_tax_year: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    tds_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tds_provided_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    tds_provided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     esi_employee: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
 
     #: Every line, frozen. The payslip renders from this and nothing else.

@@ -178,6 +178,10 @@ export type Payslip = {
   net: string;
   employer_cost: string;
   tds: string;
+  tds_source: string | null;
+  tds_tax_year: string | null;
+  tds_note: string | null;
+  tds_provided_at: string | null;
   breakdown: PayslipBreakdown;
 };
 
@@ -190,6 +194,9 @@ export type PayrollRun = {
   deductions_total: string;
   net_total: string;
   employer_cost_total: string;
+  /** Top-up to the EPF administration minimum. Levied per establishment per
+   *  month, so it belongs to the run rather than to any one payslip. */
+  admin_shortfall: string;
 };
 
 export type PayrollRunDetail = PayrollRun & { payslips: Payslip[] };

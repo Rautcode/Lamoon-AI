@@ -66,6 +66,20 @@ class EpfRule:
     pension_rate: Decimal
     #: EPS is capped on this wage however much the employer contributes on.
     pension_wage_cap: Decimal
+    #: Employees' Deposit Linked Insurance. Employer-only, on wages capped at
+    #: `edli_wage_cap` — so at most ~75/month per employee.
+    edli_rate: Decimal
+    edli_wage_cap: Decimal
+    #: EPF administration charges (A/c 2). Employer-only.
+    admin_rate: Decimal
+    #: ...but with a floor per ESTABLISHMENT per month, not per employee. A
+    #: small company owes this minimum however little 0.5% comes to, which is
+    #: why it is settled at run level rather than on a payslip.
+    admin_min_per_establishment: Decimal
+    #: The date from which EPS is not payable to a first-time member earning
+    #: above the ceiling. Their whole employer share goes to EPF instead.
+    eps_new_member_cutoff: date
+    eps_max_age: int
 
 
 @dataclass(frozen=True)
@@ -97,6 +111,12 @@ EPF_RULES: list[EpfRule] = [
         employer_rate=Decimal("0.12"),
         pension_rate=Decimal("0.0833"),
         pension_wage_cap=Decimal("15000"),
+        edli_rate=Decimal("0.005"),
+        edli_wage_cap=Decimal("15000"),
+        admin_rate=Decimal("0.005"),
+        admin_min_per_establishment=Decimal("500"),
+        eps_new_member_cutoff=date(2014, 9, 1),
+        eps_max_age=58,
     ),
 ]
 
@@ -192,3 +212,64 @@ def statutory_wage(
         added_back=added_back,
         version=definition.version,
     )
+
+
+# --- EPS eligibility --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EpsDecision:
+    """Whether the pension scheme applies, and WHY — the reason goes on the
+    payslip, because "your employer's whole 12% went to EPF this month" is a
+    question employees actually ask."""
+
+    eligible: bool
+    reason: str
+
+
+def age_on(born: date, on: date) -> int:
+    return on.year - born.year - ((on.month, on.day) < (born.month, born.day))
+
+
+def eps_decision(
+    *,
+    period: date,
+    rule: EpfRule,
+    pf_wage: Decimal,
+    ceiling: Decimal,
+    date_of_birth: date | None = None,
+    pf_first_joined_on: date | None = None,
+) -> EpsDecision:
+    """EPS is NOT universal, and the engine must never assume an 8.33/3.67
+    split.
+
+    Two exclusions are modelled, both from EPFO's employer guidance:
+      * a member who has attained 58 stops accruing pension
+      * someone becoming an EPF member for the FIRST time on or after
+        1 Sep 2014 while earning above the wage ceiling never joins EPS
+
+    In both cases the employer's whole contribution goes to EPF. Because the
+    residual EPF share is derived by subtraction, that falls out of setting
+    pension to zero — no separate arithmetic.
+
+    Unknown dates mean eligible: a company that hasn't captured dates of birth
+    yet should keep contributing to EPS, not silently stop. Under-remitting to
+    EPS is the more harmful error, and the payslip says the basis was assumed.
+    """
+    if date_of_birth is not None and age_on(date_of_birth, period) >= rule.eps_max_age:
+        return EpsDecision(False, f"aged {rule.eps_max_age} or over")
+
+    if (
+        pf_first_joined_on is not None
+        and pf_first_joined_on >= rule.eps_new_member_cutoff
+        and pf_wage > ceiling
+    ):
+        return EpsDecision(
+            False,
+            f"first became an EPF member on or after "
+            f"{rule.eps_new_member_cutoff.isoformat()} above the wage ceiling",
+        )
+
+    if date_of_birth is None or pf_first_joined_on is None:
+        return EpsDecision(True, "eligible (date of birth or EPF joining date not on record)")
+    return EpsDecision(True, "eligible")

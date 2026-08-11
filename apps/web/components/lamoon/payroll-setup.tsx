@@ -277,8 +277,13 @@ function ProfessionalTax() {
   // to fall back to per-field the way the other two panels do. This is React's
   // documented "adjust state when a prop changes" pattern: reset during
   // render, not in an effect, so no extra paint and no lint suppression.
+  //
+  // `dirty` is what stops a background refetch landing mid-edit and silently
+  // discarding a row someone just typed. A dropped slab is a wrong statutory
+  // deduction, so losing one quietly is the worst outcome here.
+  const [dirty, setDirty] = useState(false);
   const [syncedFrom, setSyncedFrom] = useState<PTSlab[] | undefined>(undefined);
-  if (slabs && slabs !== syncedFrom) {
+  if (slabs && slabs !== syncedFrom && !dirty) {
     setSyncedFrom(slabs);
     setRows(slabs.map((s: PTSlab) => ({ up_to: s.up_to ?? "", amount: s.amount })));
   }
@@ -292,12 +297,17 @@ function ProfessionalTax() {
       ),
     onSuccess: () => {
       setError(null);
+      setDirty(false); // server copy is authoritative again
       qc.invalidateQueries({ queryKey: ["pt-slabs"] });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Could not save"),
   });
 
   const draft = rows ?? [];
+  const edit = (next: SlabDraft[]) => {
+    setDirty(true);
+    setRows(next);
+  };
 
   return (
     <div>
@@ -318,7 +328,7 @@ function ProfessionalTax() {
               <Input
                 value={row.up_to}
                 onChange={(e) =>
-                  setRows(draft.map((r, j) => (i === j ? { ...r, up_to: e.target.value } : r)))
+                  edit(draft.map((r, j) => (i === j ? { ...r, up_to: e.target.value } : r)))
                 }
                 placeholder="and above"
                 inputMode="decimal"
@@ -330,7 +340,7 @@ function ProfessionalTax() {
               <Input
                 value={row.amount}
                 onChange={(e) =>
-                  setRows(draft.map((r, j) => (i === j ? { ...r, amount: e.target.value } : r)))
+                  edit(draft.map((r, j) => (i === j ? { ...r, amount: e.target.value } : r)))
                 }
                 inputMode="decimal"
                 className="w-28 tabular-nums"
@@ -339,7 +349,7 @@ function ProfessionalTax() {
             <Action
               variant="ghost"
               size="sm"
-              onClick={() => setRows(draft.filter((_, j) => j !== i))}
+              onClick={() => edit(draft.filter((_, j) => j !== i))}
             >
               Remove
             </Action>
@@ -351,12 +361,12 @@ function ProfessionalTax() {
         <Action
           variant="quiet"
           size="sm"
-          onClick={() => setRows([...draft, { up_to: "", amount: "" }])}
+          onClick={() => edit([...draft, { up_to: "", amount: "" }])}
         >
           Add slab
         </Action>
         <Action size="sm" onClick={() => save.mutate(draft)} disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save schedule"}
+          {save.isPending ? "Saving…" : dirty ? "Save schedule *" : "Save schedule"}
         </Action>
       </div>
       {error && <p className="mt-2 text-[0.8125rem] text-[var(--critical)]">{error}</p>}

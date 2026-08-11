@@ -59,6 +59,11 @@ def provident_fund(
     the ceiling. Both are lawful and the choice is the employer's; capping is
     the common default, which is why it's the default here.
 
+    Also returns the two employer-only charges that ride alongside the 12%:
+    EDLI (insurance) and EPF administration. Administration additionally has a
+    per-ESTABLISHMENT monthly floor, which cannot be settled on one payslip —
+    `admin_shortfall_for` handles that at run level.
+
     The employer's EPF share is the remainder AFTER pension, not another
     rounded percentage — deriving it by subtraction is what keeps
     employee-share and employer-share reconciling to the same 12% total
@@ -68,7 +73,10 @@ def provident_fund(
     """
     base = pf_wage if on_full_wage else min(pf_wage, ceiling)
     if base <= ZERO:
-        return {"employee": ZERO, "employer_epf": ZERO, "employer_eps": ZERO, "wage": ZERO}
+        return {
+            "employee": ZERO, "employer_epf": ZERO, "employer_eps": ZERO,
+            "employer_edli": ZERO, "employer_admin": ZERO, "wage": ZERO,
+        }
 
     employee = rupees(base * rule.employee_rate)
     employer_total = rupees(base * rule.employer_rate)
@@ -81,6 +89,10 @@ def provident_fund(
         "employee": employee,
         "employer_eps": pension,
         "employer_epf": employer_total - pension,
+        # Employer-only, on top of the 12%. Leaving these out understates what
+        # the month actually costs by about 1% of PF wages.
+        "employer_edli": rupees(min(base, rule.edli_wage_cap) * rule.edli_rate),
+        "employer_admin": rupees(base * rule.admin_rate),
         "wage": money(base),
     }
 
@@ -135,3 +147,18 @@ def professional_tax(gross: Decimal, slabs: list[tuple[Decimal | None, Decimal]]
         if up_to is None or gross <= up_to:
             return money(amount)
     return ZERO
+
+
+def admin_shortfall_for(charged: Decimal, *, rule: EpfRule, has_members: bool) -> Decimal:
+    """Whatever must be added to the summed per-employee administration charges
+    to reach the establishment's monthly minimum.
+
+    The floor is per establishment, not per employee, so a five-person company
+    paying 0.5% of a small wage bill still owes the minimum. Returned as a
+    separate run-level figure rather than smeared across payslips: it is not
+    attributable to any one employee, and putting it on a payslip would make
+    that payslip's arithmetic stop reconciling.
+    """
+    if not has_members:
+        return ZERO
+    return max(ZERO, rule.admin_min_per_establishment - charged)

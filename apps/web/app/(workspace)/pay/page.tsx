@@ -45,6 +45,15 @@ function thisMonth(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
+/** `<input type="month">` speaks YYYY-MM; the API wants the first of it. */
+function monthInputToPeriod(value: string): string {
+  return `${value}-01`;
+}
+
+function periodToMonthInput(period: string): string {
+  return period.slice(0, 7);
+}
+
 function LineTable({ lines }: { lines: { code: string; name: string; amount: string }[] }) {
   const shown = lines.filter((l) => l.amount !== "0" && l.amount !== "0.00");
   if (!shown.length) return <p className="t-meta">None</p>;
@@ -74,11 +83,18 @@ function PayslipDetail({
   const qc = useQueryClient();
   const [tds, setTds] = useState(slip.tds);
   const [lop, setLop] = useState(String(slip.lop_days));
+  const [tdsSource, setTdsSource] = useState(slip.tds_source ?? "");
+  const [taxYear, setTaxYear] = useState(slip.tds_tax_year ?? "");
   const [error, setError] = useState<string | null>(null);
 
   const adjust = useMutation({
     mutationFn: () =>
-      api.payroll.adjust(runId, slip.id, { tds, lop_days: Number(lop) }),
+      api.payroll.adjust(runId, slip.id, {
+        tds,
+        lop_days: Number(lop),
+        tds_source: tdsSource || undefined,
+        tds_tax_year: taxYear || undefined,
+      }),
     onSuccess: () => {
       setError(null);
       qc.invalidateQueries({ queryKey: ["payroll-run", runId] });
@@ -131,6 +147,24 @@ function PayslipDetail({
               />
             </label>
             <label className="flex flex-col gap-1">
+              <span className="t-micro">Advised by</span>
+              <Input
+                value={tdsSource}
+                onChange={(e) => setTdsSource(e.target.value)}
+                placeholder="Customer CA"
+                className="w-40"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="t-micro">Tax year</span>
+              <Input
+                value={taxYear}
+                onChange={(e) => setTaxYear(e.target.value)}
+                placeholder="2026-27"
+                className="w-24 tabular-nums"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
               <span className="t-micro">Unpaid days</span>
               <Input
                 value={lop}
@@ -145,8 +179,14 @@ function PayslipDetail({
           </div>
           {/* The system computes unpaid days from approved unpaid leave. It
               cannot know about a mid-month exit, so an override sticks. */}
+          {/* Provenance, not decoration: six months on somebody will ask why
+              this figure was deducted, and the payslip has to answer. */}
           <p className="t-meta mt-2">
-            TDS is not computed here — enter what your accountant advises.
+            TDS is not computed here — enter what your accountant advises, and record who
+            advised it.
+            {slip.tds_provided_at &&
+              ` Last set ${new Date(slip.tds_provided_at).toLocaleDateString()}` +
+                (slip.tds_source ? ` by ${slip.tds_source}` : "") + "."}
             {slip.lop_overridden && " Unpaid days were set by hand and survive a recompute."}
           </p>
           {error && <p className="mt-2 text-[0.8125rem] text-[var(--critical)]">{error}</p>}
@@ -162,6 +202,10 @@ export default function PayPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [configuring, setConfiguring] = useState(false);
+  // Payroll for a month is normally run after that month ends, so "the current
+  // month" is the wrong default to be locked to — and once it's finalized the
+  // button had no other period to offer.
+  const [month, setMonth] = useState(periodToMonthInput(thisMonth()));
   const canWrite = hasPermission(useAuthStore((s) => s.permissions), "payroll.write");
 
   const runs = useQuery({ queryKey: ["payroll-runs"], queryFn: api.payroll.runs });
@@ -177,6 +221,7 @@ export default function PayPage() {
     onSuccess: (detail) => {
       setError(null);
       setSelected(detail.id);
+      setMonth(periodToMonthInput(detail.period));
       qc.invalidateQueries({ queryKey: ["payroll-runs"] });
       qc.invalidateQueries({ queryKey: ["payroll-run", detail.id] });
     },
@@ -206,9 +251,25 @@ export default function PayPage() {
               <Settings2 className="size-4" aria-hidden />
               Setup
             </Action>
-            <Action onClick={() => compute.mutate(thisMonth())} disabled={compute.isPending}>
+            <label className="flex items-center gap-2">
+              <span className="sr-only">Payroll month</span>
+              <input
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                className="rounded-[10px] bg-[var(--surface-2)] px-3 py-2 text-[0.8125rem]
+                           tabular-nums outline-none focus-visible:ring-2
+                           focus-visible:ring-[var(--lumo-base)]"
+              />
+            </label>
+            <Action
+              onClick={() => compute.mutate(monthInputToPeriod(month))}
+              disabled={compute.isPending || !month}
+            >
               <RefreshCw className="size-4" aria-hidden />
-              {compute.isPending ? "Computing…" : `Run ${monthLabel(thisMonth())}`}
+              {compute.isPending
+                ? "Computing…"
+                : `Run ${monthLabel(monthInputToPeriod(month))}`}
             </Action>
           </div>
         )}
@@ -227,7 +288,10 @@ export default function PayPage() {
           {runs.data.map((r) => (
             <button
               key={r.id}
-              onClick={() => setSelected(r.id)}
+              onClick={() => {
+                setSelected(r.id);
+                setMonth(periodToMonthInput(r.period));
+              }}
               aria-pressed={r.id === runId}
               className={`rounded-full px-3 py-1.5 text-[0.8125rem] transition-colors ${
                 r.id === runId
@@ -273,6 +337,11 @@ export default function PayPage() {
               <span className="text-[1.125rem] tabular-nums">
                 {rupees(detail.employer_cost_total)}
               </span>
+              {Number(detail.admin_shortfall) > 0 && (
+                <span className="t-meta block">
+                  incl. {rupees(detail.admin_shortfall)} PF admin minimum
+                </span>
+              )}
             </div>
             <div className="ml-auto flex items-center gap-3">
               {draft ? (

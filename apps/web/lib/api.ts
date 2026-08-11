@@ -200,7 +200,17 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ period }),
       }),
-    adjust: (runId: string, payslipId: string, patch: { lop_days?: number; tds?: string }) =>
+    adjust: (
+      runId: string,
+      payslipId: string,
+      patch: {
+        lop_days?: number;
+        tds?: string;
+        tds_source?: string;
+        tds_tax_year?: string;
+        tds_note?: string;
+      }
+    ) =>
       request<Payslip>(`/payroll/runs/${runId}/payslips/${payslipId}`, {
         method: "PATCH",
         body: JSON.stringify(patch),

@@ -263,13 +263,26 @@ def compute_payslip(
 
     settings = get_settings(db, company_id)
 
+    # EPS is not universal. Decide it from the employee's own record rather
+    # than assuming an 8.33/3.67 split for everyone.
+    eps = rules.eps_decision(
+        period=period, rule=epf_rule, pf_wage=pf_wage,
+        ceiling=settings.pf_wage_ceiling,
+        date_of_birth=employee.date_of_birth,
+        pf_first_joined_on=employee.pf_first_joined_on,
+    )
     pf = (
         statutory.provident_fund(
             pf_wage, ceiling=settings.pf_wage_ceiling, rule=epf_rule,
-            on_full_wage=settings.pf_on_full_wage,
+            # An international worker has no wage ceiling at all.
+            on_full_wage=settings.pf_on_full_wage or employee.is_international_worker,
+            eps_eligible=eps.eligible,
         )
         if settings.pf_enabled
-        else {"employee": ZERO, "employer_epf": ZERO, "employer_eps": ZERO, "wage": ZERO}
+        else {
+            "employee": ZERO, "employer_epf": ZERO, "employer_eps": ZERO,
+            "employer_edli": ZERO, "employer_admin": ZERO, "wage": ZERO,
+        }
     )
     esi_amounts = (
         statutory.esi(
@@ -287,9 +300,11 @@ def compute_payslip(
     manual = sum(Decimal(d["amount"]) for d in other_deductions)
     deductions = statutory.money(statutory_deductions + manual)
     net = statutory.money(gross - deductions)
-    employer_cost = statutory.money(
-        gross + pf["employer_epf"] + pf["employer_eps"] + esi_amounts["employer"]
+    employer_contributions = (
+        pf["employer_epf"] + pf["employer_eps"] + pf["employer_edli"]
+        + pf["employer_admin"] + esi_amounts["employer"]
     )
+    employer_cost = statutory.money(gross + employer_contributions)
 
     return {
         "employee_id": employee.id,
@@ -304,6 +319,7 @@ def compute_payslip(
         "employer_cost": employer_cost,
         "tds": tds,
         "esi_employee": esi_amounts["employee"],
+        "employer_admin": pf["employer_admin"],
         "breakdown": {
             "earnings": earnings,
             "deductions": [
@@ -319,6 +335,10 @@ def compute_payslip(
             "employer_contributions": [
                 {"code": "EPF_ER", "name": "Employer PF", "amount": str(pf["employer_epf"])},
                 {"code": "EPS_ER", "name": "Employer Pension", "amount": str(pf["employer_eps"])},
+                {"code": "EDLI_ER", "name": "EDLI (insurance)",
+                 "amount": str(pf["employer_edli"])},
+                {"code": "ADMIN_ER", "name": "PF admin charges",
+                 "amount": str(pf["employer_admin"])},
                 {"code": "ESI_ER", "name": "Employer ESI", "amount": str(esi_amounts["employer"])},
             ],
             "basis": {
@@ -332,6 +352,8 @@ def compute_payslip(
                 "excluded_allowances": str(basis.excluded),
                 "remuneration": str(basis.remuneration),
                 "added_back": str(basis.added_back),
+                # Why the employer's 12% split the way it did.
+                "eps": eps.reason,
             },
             # The rules this payslip was computed under, resolved by PERIOD.
             # Re-running a corrected month years later must use these, not
@@ -366,6 +388,8 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
     }
 
     gross_total = deductions_total = net_total = employer_total = ZERO
+    admin_charged = ZERO
+    contributing_members = 0
 
     for employee in employees:
         # Not on the payroll for a month that ended before they joined.
@@ -394,10 +418,26 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
         deductions_total += computed["deductions"]
         net_total += computed["net"]
         employer_total += computed["employer_cost"]
+        admin_charged += computed["employer_admin"]
+        if computed["employer_admin"] > ZERO:
+            contributing_members += 1
+
+    # The EPF administration minimum is per establishment per month, so it can
+    # only be settled once every payslip is known.
+    settings = get_settings(db, company_id)
+    run.admin_shortfall = (
+        statutory.admin_shortfall_for(
+            admin_charged,
+            rule=rules.epf_rule_for(run.period),
+            has_members=contributing_members > 0,
+        )
+        if settings.pf_enabled
+        else ZERO
+    )
 
     run.gross_total = gross_total
     run.deductions_total = deductions_total
     run.net_total = net_total
-    run.employer_cost_total = employer_total
+    run.employer_cost_total = statutory.money(employer_total + run.admin_shortfall)
     db.flush()
     return run

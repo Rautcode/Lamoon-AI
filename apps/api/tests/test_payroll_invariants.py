@@ -156,8 +156,31 @@ def test_run_totals_always_equal_the_sum_of_their_payslips(client, org):
     for i, (basic, hra) in enumerate(SALARY_SHAPES):
         _employee(client, org, f"Sum {i}", basic, hra)
     run = _run(client, org)
-    for field in ("gross", "deductions", "net", "employer_cost"):
+    for field in ("gross", "deductions", "net"):
         assert D(run[f"{field}_total"]) == sum(D(p[field]) for p in run["payslips"]), field
+
+    # Employer cost carries one figure that belongs to no payslip: the top-up
+    # to the EPF administration minimum, which is levied per establishment.
+    assert D(run["employer_cost_total"]) == sum(
+        D(p["employer_cost"]) for p in run["payslips"]
+    ) + D(run["admin_shortfall"])
+
+
+def test_the_admin_minimum_is_charged_once_per_establishment_not_per_head(client, org):
+    """A small company owes the monthly floor however little 0.5% comes to;
+    a large one owes nothing extra. Either way it is charged once."""
+    _employee(client, org, "Solo", "9000", "9000")
+    small = _run(client, org)
+    charged = sum(
+        D(line["amount"])
+        for p in small["payslips"]
+        for line in p["breakdown"]["employer_contributions"]
+        if line["code"] == "ADMIN_ER"
+    )
+    assert D(small["admin_shortfall"]) == max(D("0"), D("500") - charged)
+    assert D(small["employer_cost_total"]) >= sum(
+        D(p["employer_cost"]) for p in small["payslips"]
+    )
 
 
 # --- idempotence: the invariant that caught the joiner bug ------------------

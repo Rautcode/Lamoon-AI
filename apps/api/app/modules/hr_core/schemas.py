@@ -58,6 +58,10 @@ class EmployeeIn(BaseModel):
     reporting_manager_id: uuid.UUID | None = None
     status: str = "active"
     joined_on: date | None = None
+    date_of_birth: date | None = None
+    pf_first_joined_on: date | None = None
+    is_international_worker: bool = False
+    uan: str | None = None
 
 
 class EmployeeUpdate(BaseModel):
@@ -79,6 +83,12 @@ class EmployeeUpdate(BaseModel):
     reporting_manager_id: uuid.UUID | None = None
     status: str | None = None
     joined_on: date | None = None
+    date_of_birth: date | None = None
+    pf_first_joined_on: date | None = None
+    # None, not False — a PATCH schema must not imply a default that would be
+    # written back. `exclude_unset` drops it when the caller omits it.
+    is_international_worker: bool | None = None
+    uan: str | None = None
 
     @field_validator("full_name", "status")
     @classmethod
@@ -102,5 +112,9 @@ class EmployeeOut(BaseModel):
     reporting_manager_id: uuid.UUID | None
     status: str
     joined_on: date | None
+    date_of_birth: date | None = None
+    pf_first_joined_on: date | None = None
+    is_international_worker: bool = False
+    uan: str | None = None
 
     model_config = {"from_attributes": True}

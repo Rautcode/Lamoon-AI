@@ -131,6 +131,10 @@ class PayslipOut(BaseModel):
     net: Decimal
     employer_cost: Decimal
     tds: Decimal
+    tds_source: str | None = None
+    tds_tax_year: str | None = None
+    tds_note: str | None = None
+    tds_provided_at: datetime | None = None
     breakdown: dict
 
     model_config = {"from_attributes": True}
@@ -143,6 +147,11 @@ class PayslipAdjustIn(BaseModel):
 
     lop_days: int | None = Field(default=None, ge=0)
     tds: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    #: Where the TDS figure came from. Recorded alongside the amount so the
+    #: deduction can be explained months later.
+    tds_source: str | None = Field(default=None, max_length=120)
+    tds_tax_year: str | None = Field(default=None, max_length=9)
+    tds_note: str | None = None
 
 
 class RunOut(BaseModel):
@@ -154,6 +163,7 @@ class RunOut(BaseModel):
     deductions_total: Decimal
     net_total: Decimal
     employer_cost_total: Decimal
+    admin_shortfall: Decimal = Decimal("0")
 
     model_config = {"from_attributes": True}
 

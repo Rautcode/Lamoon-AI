@@ -303,6 +303,7 @@ def adjust_payslip(
     payslip_id: uuid.UUID,
     body: PayslipAdjustIn,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
     cid: str = Depends(resolve_tenant),
 ):
     company_id = uuid.UUID(cid)
@@ -322,6 +323,13 @@ def adjust_payslip(
         slip.lop_overridden = True  # survives the next recompute
     if body.tds is not None:
         slip.tds = body.tds
+        # Provenance travels with the amount. "Why was ₹4,850 deducted?" has to
+        # be answerable from the payslip, not from someone's memory.
+        slip.tds_source = body.tds_source
+        slip.tds_tax_year = body.tds_tax_year
+        slip.tds_note = body.tds_note
+        slip.tds_provided_by = uuid.UUID(principal.user_id)
+        slip.tds_provided_at = datetime.now(UTC)
 
     # Resolve unpaid days the same way a run does, rather than reusing the
     # stored total. Passing the stored value back was the bug: it already
@@ -348,7 +356,10 @@ def adjust_payslip(
     run.gross_total = sum((p.gross for p in slips), start=zero)
     run.deductions_total = sum((p.deductions for p in slips), start=zero)
     run.net_total = sum((p.net for p in slips), start=zero)
-    run.employer_cost_total = sum((p.employer_cost for p in slips), start=zero)
+    # The establishment admin top-up is a run-level figure, not a payslip one.
+    run.employer_cost_total = sum(
+        (p.employer_cost for p in slips), start=zero
+    ) + run.admin_shortfall
     db.flush()
 
     audit.record(
