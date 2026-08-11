@@ -11,6 +11,7 @@ from decimal import Decimal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.modules.payroll.rules import WAGE_BASIS_VALUES
+from app.modules.payroll.workforce import FACT_SOURCES, INPUT_KINDS, WORK_DAY_STATUSES
 
 
 class PayComponentIn(BaseModel):
@@ -170,3 +171,174 @@ class RunOut(BaseModel):
 
 class RunDetailOut(RunOut):
     payslips: list[PayslipOut]
+
+
+# --- establishments ---------------------------------------------------------
+
+
+class EstablishmentIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    #: ISO 3166-2 subdivision without the country prefix — "MH", "KA", "DL".
+    state_code: str = Field(min_length=2, max_length=4)
+    pf_establishment_code: str | None = Field(default=None, max_length=30)
+    esi_code: str | None = Field(default=None, max_length=30)
+    pt_registration: str | None = Field(default=None, max_length=40)
+    minimum_daily_wage: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=2
+    )
+    is_default: bool = False
+
+    @field_validator("state_code")
+    @classmethod
+    def _upper(cls, v: str) -> str:
+        return v.strip().upper()
+
+
+class EstablishmentOut(EstablishmentIn):
+    id: uuid.UUID
+    model_config = {"from_attributes": True}
+
+
+# --- work facts -------------------------------------------------------------
+
+
+class WorkFactIn(BaseModel):
+    """One day for one person. Facts only — never an amount."""
+
+    employee_id: uuid.UUID
+    day: date
+    status: str = "worked"
+    hours_worked: Decimal = Field(default=Decimal("0"), ge=0, le=24, decimal_places=2)
+    overtime_hours: Decimal = Field(default=Decimal("0"), ge=0, le=24, decimal_places=2)
+    premium_day: bool = False
+    night_shift: bool = False
+    site: str | None = Field(default=None, max_length=120)
+    shift: str | None = Field(default=None, max_length=60)
+    source: str = "manual"
+    note: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def _status(cls, v: str) -> str:
+        if v not in WORK_DAY_STATUSES:
+            raise ValueError(f"status must be one of {', '.join(WORK_DAY_STATUSES)}")
+        return v
+
+    @field_validator("source")
+    @classmethod
+    def _source(cls, v: str) -> str:
+        if v not in FACT_SOURCES:
+            raise ValueError(f"source must be one of {', '.join(FACT_SOURCES)}")
+        return v
+
+
+class WorkFactOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    day: date
+    status: str
+    hours_worked: Decimal
+    overtime_hours: Decimal
+    premium_day: bool
+    night_shift: bool
+    site: str | None
+    shift: str | None
+    source: str
+    note: str | None
+    approved_at: datetime | None
+    approved_by: uuid.UUID | None
+
+    model_config = {"from_attributes": True}
+
+
+class ApproveIn(BaseModel):
+    """Bulk approval. Ids are explicit — approving "everything shown" depends
+    on a filter the server can't see, and would sign off rows nobody read."""
+
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+
+
+# --- the payroll input ledger ------------------------------------------------
+
+
+class PayrollInputIn(BaseModel):
+    """A manual input. Derived inputs are generated, never posted."""
+
+    employee_id: uuid.UUID
+    period: date
+    kind: str
+    code: str = Field(min_length=1, max_length=40)
+    name: str = Field(min_length=1, max_length=120)
+    amount: Decimal = Field(max_digits=12, decimal_places=2)
+    wage_basis: str = "excluded"
+    reason: str | None = None
+    sequence: int = 300
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in INPUT_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(INPUT_KINDS)}")
+        if v == "overtime":
+            # Overtime is DERIVED from approved hours and a multiplier. Letting
+            # a caller post an amount is exactly the shortcut that makes an
+            # overtime policy unreplayable and a typo payable.
+            raise ValueError("overtime is derived from work facts, not entered")
+        return v
+
+    @field_validator("wage_basis")
+    @classmethod
+    def _basis(cls, v: str) -> str:
+        if v not in WAGE_BASIS_VALUES:
+            raise ValueError(f"wage_basis must be one of {', '.join(WAGE_BASIS_VALUES)}")
+        return v
+
+    @field_validator("code")
+    @classmethod
+    def _code(cls, v: str) -> str:
+        return v.strip().upper()
+
+
+class PayrollInputOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    period: date
+    kind: str
+    code: str
+    name: str
+    amount: Decimal
+    quantity: Decimal | None
+    rate: Decimal | None
+    wage_basis: str
+    source: str
+    reason: str | None
+    approved_at: datetime | None
+    locked: bool
+    sequence: int
+
+    model_config = {"from_attributes": True}
+
+
+# --- validation -------------------------------------------------------------
+
+
+class FindingOut(BaseModel):
+    code: str
+    severity: str
+    message: str
+    employee_id: uuid.UUID | None = None
+    employee_name: str | None = None
+    impact: Decimal | None = None
+    detail: dict = {}
+
+
+class ValidationOut(BaseModel):
+    """Three questions, three answers — never folded into one number."""
+
+    period: date
+    blocking: int
+    warnings: int
+    info: int
+    impact: Decimal
+    groups: list[dict]
+    findings: list[FindingOut]

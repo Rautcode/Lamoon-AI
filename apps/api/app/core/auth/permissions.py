@@ -11,6 +11,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "attendance.read", "attendance.write",
             "calendar.write",
             "payroll.read", "payroll.write",
+            "workfact.read", "workfact.write", "workfact.approve",
         }
     ),
     # manager deliberately has NO payroll.read. Whether a manager may see their
@@ -19,8 +20,15 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     # manager approves their team's leave but doesn't administer HR data —
     # leave.write (filing a request on someone's behalf) stays HR-only until
     # there's a real ESS flow where employees file their own.
+    # A manager DOES approve work facts. Facts are hours, sites and shifts —
+    # not money — so a supervisor signing off overtime learns nothing about
+    # anyone's pay. That separation is what lets approval sit with the person
+    # who actually saw the work happen, while the ledger stays payroll-only.
     "manager": frozenset(
-        {"ats.read", "employee.read", "leave.read", "leave.approve", "attendance.read"}
+        {
+            "ats.read", "employee.read", "leave.read", "leave.approve",
+            "attendance.read", "workfact.read", "workfact.approve",
+        }
     ),
     # ESS. `self.*` grants access to /me/** only — those routes derive the
     # employee from the JWT and never accept an id, so an employee physically

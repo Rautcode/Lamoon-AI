@@ -72,10 +72,16 @@ def validate(db: Session, *, company_id: uuid.UUID, period: date) -> list[Findin
         )
     ).all()
 
+    _, month_end = ledger.month_bounds(period)
+
     for emp in employees:
         inputs = ledger.inputs_for(db, emp.id, period)
         earnings = [i for i in inputs if i.kind in ("earning", "overtime")]
 
+        # Checks that need earnings to exist. Everything after this block is
+        # INDEPENDENT and must still run — an early `continue` here would hide
+        # a person's unapproved overtime behind their missing salary structure,
+        # which is precisely the pair you most want to see together.
         if not earnings:
             findings.append(
                 Finding(
@@ -84,37 +90,39 @@ def validate(db: Session, *, company_id: uuid.UUID, period: date) -> list[Findin
                     message="No pay inputs for this period — cannot be calculated",
                 )
             )
-            continue
-
-        gross = sum((i.amount for i in earnings), start=ZERO)
-        if gross <= ZERO:
-            findings.append(
-                Finding(
-                    code="zero_gross", severity=BLOCKING,
-                    employee_id=emp.id, employee_name=emp.full_name,
-                    message="Gross pay computes to zero",
+        else:
+            gross = sum((i.amount for i in earnings), start=ZERO)
+            if gross <= ZERO:
+                findings.append(
+                    Finding(
+                        code="zero_gross", severity=BLOCKING,
+                        employee_id=emp.id, employee_name=emp.full_name,
+                        message="Gross pay computes to zero",
+                    )
                 )
-            )
 
-        deductions = sum(
-            (i.amount for i in inputs if i.kind in ("deduction", "tax")), start=ZERO
-        )
-        if deductions > gross:
-            findings.append(
-                Finding(
-                    code="negative_net", severity=BLOCKING,
-                    employee_id=emp.id, employee_name=emp.full_name,
-                    impact=deductions - gross,
-                    message="Deductions exceed gross — net pay would be negative",
-                )
+            deductions = sum(
+                (i.amount for i in inputs if i.kind in ("deduction", "tax")), start=ZERO
             )
+            if deductions > gross:
+                findings.append(
+                    Finding(
+                        code="negative_net", severity=BLOCKING,
+                        employee_id=emp.id, employee_name=emp.full_name,
+                        impact=deductions - gross,
+                        message="Deductions exceed gross — net pay would be negative",
+                    )
+                )
 
         # Unapproved work facts are a warning, not an error: payroll can run
         # without them, but somebody is not getting paid for hours they worked.
+        # Bounded to THIS month — an unbounded lower/upper range would report
+        # next month's pending approvals against this period.
         pending = db.scalars(
             select(WorkFact).where(
                 WorkFact.employee_id == emp.id,
                 WorkFact.day >= period,
+                WorkFact.day <= month_end,
                 WorkFact.approved_at.is_(None),
                 WorkFact.overtime_hours > 0,
                 WorkFact.deleted_at.is_(None),
@@ -127,7 +135,7 @@ def validate(db: Session, *, company_id: uuid.UUID, period: date) -> list[Findin
                     code="overtime_unapproved", severity=WARNING,
                     employee_id=emp.id, employee_name=emp.full_name,
                     message=f"{hours} overtime hours awaiting approval — not being paid",
-                    detail={"hours": str(hours)},
+                    detail={"hours": str(hours), "days": str(len(pending))},
                 )
             )
 
