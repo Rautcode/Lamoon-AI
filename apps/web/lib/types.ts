@@ -326,3 +326,23 @@ export type RebuildResult = {
   preserved: number;
   pending: number;
 };
+
+/** One configuration or coverage check. `unknown` means the system cannot
+ *  determine it — never rendered as a pass. */
+export type ReadinessCheck = {
+  code: string;
+  label: string;
+  status: "ok" | "warning" | "blocking" | "unknown";
+  detail: string;
+  count: number | null;
+};
+
+export type Readiness = {
+  period: string;
+  /** A summary, never the answer on its own — always read with `blocking`. */
+  percent: number;
+  blocking: number;
+  warnings: number;
+  unknown: number;
+  checks: ReadinessCheck[];
+};

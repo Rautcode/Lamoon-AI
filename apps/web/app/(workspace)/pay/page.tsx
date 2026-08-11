@@ -8,6 +8,7 @@ import type { Payslip } from "@/lib/types";
 import { Action, Avatar, Empty, Pill, SectionLabel, Status } from "@/components/lamoon/primitives";
 import { PayrollSetup } from "@/components/lamoon/payroll-setup";
 import { PayrollExceptions } from "@/components/lamoon/payroll-exceptions";
+import { PayrollReadiness } from "@/components/lamoon/payroll-readiness";
 import { PayrollLedger } from "@/components/lamoon/payroll-ledger";
 import { Input } from "@/components/ui/input";
 
@@ -420,6 +421,10 @@ export default function PayPage() {
               later month, the same way payroll works on paper.
             </p>
           )}
+
+          <div className="mt-12">
+            <PayrollReadiness period={detail.period} />
+          </div>
 
           <div className="mt-12">
             <PayrollExceptions period={detail.period} />

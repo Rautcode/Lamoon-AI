@@ -19,6 +19,7 @@ import type {
   PayrollInput,
   PayrollRun,
   PayrollRunDetail,
+  Readiness,
   RebuildResult,
   PayrollSettings,
   Payslip,
@@ -220,6 +221,10 @@ export const api = {
       }),
     finalize: (id: string) =>
       request<PayrollRun>(`/payroll/runs/${id}/finalize`, { method: "POST" }),
+    /** Can payroll run at all? Configuration and coverage, per company —
+     *  distinct from validation, which is per employee. */
+    readiness: (period: string) =>
+      request<Readiness>(`/payroll/readiness?period=${period}`),
     /** Are the inputs valid? Blocking findings exclude someone from the run. */
     validation: (period: string) =>
       request<FindingReport>(`/payroll/validation?period=${period}`),

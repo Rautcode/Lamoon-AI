@@ -29,7 +29,7 @@ from app.core.rbac import current_user, require
 from app.core.tenant import resolve_tenant
 from app.modules.audit import service as audit
 from app.modules.hr_core.models import Employee
-from app.modules.payroll import ledger, validation
+from app.modules.payroll import ledger, readiness, validation
 from app.modules.payroll.models import PayrollRun
 from app.modules.payroll.schemas import (
     ApproveIn,
@@ -40,6 +40,7 @@ from app.modules.payroll.schemas import (
     FindingOut,
     PayrollInputIn,
     PayrollInputOut,
+    ReadinessOut,
     RebuildIn,
     RebuildOut,
     ValidationOut,
@@ -532,6 +533,21 @@ def _findings_out(findings: list[validation.Finding]) -> list[FindingOut]:
         )
         for f in findings
     ]
+
+
+@ledger_router.get("/readiness", response_model=ReadinessOut, dependencies=CAN_READ_PAY)
+def run_readiness(
+    period: date, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Can payroll run at all? Configuration and coverage, per company.
+
+    Distinct from validation, which asks whether one person's inputs are
+    valid. "Nobody has a salary structure" belongs here; "Meera has no salary
+    structure" belongs there.
+    """
+    return ReadinessOut(
+        **readiness.evaluate(db, company_id=uuid.UUID(cid), period=_period(period))
+    )
 
 
 @ledger_router.get("/validation", response_model=ValidationOut, dependencies=CAN_READ_PAY)

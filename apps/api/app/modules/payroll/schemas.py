@@ -379,3 +379,30 @@ class RebuildOut(BaseModel):
     #: Of those, how many are still waiting for approval. Payroll will not pay
     #: them until somebody signs them off.
     pending: int
+
+
+class ReadinessCheck(BaseModel):
+    code: str
+    label: str
+    #: ok | warning | blocking | unknown. Never colour alone in the UI.
+    status: str
+    detail: str
+    count: int | None = None
+
+
+class ReadinessOut(BaseModel):
+    """Can payroll run at all?
+
+    `percent` is a summary, not the answer. One blocking check means payroll
+    cannot be run correctly however high it reads, which is why `blocking`
+    travels with it.
+    """
+
+    period: date
+    percent: int
+    blocking: int
+    warnings: int
+    #: Checks the system cannot evaluate. Excluded from the percentage rather
+    #: than counted as passing.
+    unknown: int
+    checks: list[ReadinessCheck]
