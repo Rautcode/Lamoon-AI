@@ -62,6 +62,7 @@ class EmployeeIn(BaseModel):
     pf_first_joined_on: date | None = None
     is_international_worker: bool = False
     uan: str | None = None
+    establishment_id: uuid.UUID | None = None
 
 
 class EmployeeUpdate(BaseModel):
@@ -89,6 +90,7 @@ class EmployeeUpdate(BaseModel):
     # written back. `exclude_unset` drops it when the caller omits it.
     is_international_worker: bool | None = None
     uan: str | None = None
+    establishment_id: uuid.UUID | None = None
 
     @field_validator("full_name", "status")
     @classmethod
@@ -116,5 +118,6 @@ class EmployeeOut(BaseModel):
     pf_first_joined_on: date | None = None
     is_international_worker: bool = False
     uan: str | None = None
+    establishment_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}

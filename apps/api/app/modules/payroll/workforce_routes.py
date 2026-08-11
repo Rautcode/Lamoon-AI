@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth.provider import Principal
@@ -33,6 +33,8 @@ from app.modules.payroll import ledger, validation
 from app.modules.payroll.models import PayrollRun
 from app.modules.payroll.schemas import (
     ApproveIn,
+    AssignEmployeesIn,
+    AssignmentOut,
     EstablishmentIn,
     EstablishmentOut,
     FindingOut,
@@ -123,6 +125,129 @@ def create_establishment(
         action="created", payload={"state_code": est.state_code, "name": est.name},
     )
     return est
+
+
+@ledger_router.patch(
+    "/establishments/{establishment_id}", response_model=EstablishmentOut,
+    dependencies=CAN_WRITE_PAY,
+)
+def update_establishment(
+    establishment_id: uuid.UUID,
+    body: EstablishmentIn,
+    db: Session = Depends(get_db),
+    cid: str = Depends(resolve_tenant),
+):
+    est = db.get(Establishment, establishment_id)
+    if est is None or est.deleted_at is not None:
+        raise HTTPException(404, "establishment not found")
+
+    if body.is_default and not est.is_default:
+        for other in db.scalars(
+            select(Establishment).where(
+                Establishment.is_default.is_(True), Establishment.deleted_at.is_(None)
+            )
+        ).all():
+            other.is_default = False
+
+    before_state = est.state_code
+    for field, value in body.model_dump().items():
+        setattr(est, field, value)
+    db.flush()
+    audit.record(
+        db, company_id=uuid.UUID(cid), entity="establishment", entity_id=est.id,
+        action="updated",
+        # A state change moves everyone here into a different PT schedule, so
+        # it is worth naming in the log rather than recording "updated".
+        payload={"state_code": est.state_code, "state_was": before_state},
+    )
+    return est
+
+
+@ledger_router.delete(
+    "/establishments/{establishment_id}", status_code=204, dependencies=CAN_WRITE_PAY
+)
+def delete_establishment(
+    establishment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    _cid: str = Depends(resolve_tenant),
+):
+    """Refused while anyone is still attached.
+
+    Removing it would silently move those people to the company-wide PT
+    schedule — a different state's tax, applied without anyone deciding to.
+    """
+    est = db.get(Establishment, establishment_id)
+    if est is None or est.deleted_at is not None:
+        raise HTTPException(404, "establishment not found")
+
+    attached = db.scalar(
+        select(func.count())
+        .select_from(Employee)
+        .where(
+            Employee.establishment_id == establishment_id,
+            Employee.deleted_at.is_(None),
+        )
+    )
+    if attached:
+        raise HTTPException(
+            409,
+            f"{attached} employees are still attached — move them to another "
+            "establishment first",
+        )
+    est.deleted_at = datetime.now(UTC)
+
+
+@ledger_router.post(
+    "/establishments/{establishment_id}/employees", response_model=AssignmentOut,
+    dependencies=CAN_WRITE_PAY,
+)
+def assign_employees(
+    establishment_id: uuid.UUID,
+    body: AssignEmployeesIn,
+    db: Session = Depends(get_db),
+    cid: str = Depends(resolve_tenant),
+):
+    """Attach people to an establishment.
+
+    This decides which state's professional tax and minimum wage apply to
+    their pay, so it takes explicit ids rather than a filter — "everyone
+    currently on screen" is not a jurisdiction.
+
+    Finalized periods are untouched. Their payslips are frozen records that
+    were correct under the jurisdiction in force when they were paid.
+    """
+    company_id = uuid.UUID(cid)
+    est = db.get(Establishment, establishment_id)
+    if est is None or est.deleted_at is not None:
+        raise HTTPException(404, "establishment not found")
+
+    employees = db.scalars(
+        select(Employee).where(
+            Employee.id.in_(body.employee_ids), Employee.deleted_at.is_(None)
+        )
+    ).all()
+    found = {e.id for e in employees}
+    missing = [str(i) for i in body.employee_ids if i not in found]
+    if missing:
+        raise HTTPException(404, f"employees not found: {', '.join(missing[:5])}")
+
+    for emp in employees:
+        emp.establishment_id = establishment_id
+    db.flush()
+    audit.record(
+        db, company_id=company_id, entity="establishment", entity_id=establishment_id,
+        action="employees_assigned",
+        payload={"count": len(employees), "state_code": est.state_code},
+    )
+    return AssignmentOut(
+        establishment_id=establishment_id,
+        assigned=len(employees),
+        note=(
+            f"Professional tax and minimum wage for these {len(employees)} people now "
+            f"follow {est.name} ({est.state_code}) from the next payroll run. "
+            "Finalized periods are unchanged."
+        ),
+    )
 
 
 # --- work facts -------------------------------------------------------------

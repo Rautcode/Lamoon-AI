@@ -58,11 +58,27 @@ def get_settings(db: Session, company_id: uuid.UUID) -> PayrollSettings:
     return row
 
 
-def pt_slabs(db: Session) -> list[tuple[Decimal | None, Decimal]]:
-    rows = db.scalars(
-        select(ProfessionalTaxSlab).where(ProfessionalTaxSlab.deleted_at.is_(None))
-    ).all()
-    return [(s.up_to, s.amount) for s in rows]
+def pt_slabs(
+    db: Session, establishment_id: uuid.UUID | None = None
+) -> list[tuple[Decimal | None, Decimal]]:
+    """The professional tax schedule that applies to one employee.
+
+    Resolution is deliberately NOT a fallback chain. If the employee is
+    attached to an establishment, only that establishment's schedule applies —
+    an empty one means no PT, because that IS the answer in Delhi, Haryana and
+    UP. Falling back to a company-wide schedule there would deduct Maharashtra's
+    tax from a Delhi salary, which is worse than deducting nothing.
+
+    An employee with no establishment gets the company-wide schedule, which is
+    the correct and simplest arrangement for a single-state customer.
+    """
+    stmt = select(ProfessionalTaxSlab).where(ProfessionalTaxSlab.deleted_at.is_(None))
+    stmt = stmt.where(
+        ProfessionalTaxSlab.establishment_id == establishment_id
+        if establishment_id is not None
+        else ProfessionalTaxSlab.establishment_id.is_(None)
+    )
+    return [(s.up_to, s.amount) for s in db.scalars(stmt).all()]
 
 
 def unpaid_leave_days(db: Session, employee_id: uuid.UUID, start: date, end: date) -> int:
@@ -307,7 +323,8 @@ def compute_payslip(
         if settings.esi_enabled
         else {"employee": ZERO, "employer": ZERO, "wage": ZERO}
     )
-    pt = statutory.professional_tax(gross, pt_slabs(db))
+    # Jurisdiction comes from the employee's establishment, not the company.
+    pt = statutory.professional_tax(gross, pt_slabs(db, employee.establishment_id))
 
     statutory_deductions = pf["employee"] + esi_amounts["employee"] + pt + tds + entered_tax
     manual = sum(Decimal(d["amount"]) for d in other_deductions)

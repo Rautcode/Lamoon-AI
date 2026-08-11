@@ -342,3 +342,21 @@ class ValidationOut(BaseModel):
     impact: Decimal
     groups: list[dict]
     findings: list[FindingOut]
+
+
+class AssignEmployeesIn(BaseModel):
+    """Attach people to an establishment.
+
+    Explicit ids rather than a filter: assignment decides which state's
+    professional tax and minimum wage apply to somebody's pay, so it is not a
+    thing to do to "everyone currently on screen".
+    """
+
+    employee_ids: list[uuid.UUID] = Field(min_length=1, max_length=1000)
+
+
+class AssignmentOut(BaseModel):
+    establishment_id: uuid.UUID
+    assigned: int
+    #: Periods already finalized are untouched — this only affects future runs.
+    note: str

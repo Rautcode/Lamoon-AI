@@ -154,16 +154,31 @@ def _minimum_wage(
     topping somebody up to a rate that may not apply would be worse than
     saying nothing.
     """
-    est = db.scalars(
-        select(Establishment).where(
-            Establishment.minimum_daily_wage.is_not(None),
-            Establishment.deleted_at.is_(None),
-        )
+    # Each employee is measured against THEIR OWN establishment's floor. Taking
+    # the lowest across the company would clear a Mumbai worker against a rate
+    # set for somewhere cheaper, which is the opposite of a safety check.
+    establishments = db.scalars(
+        select(Establishment).where(Establishment.deleted_at.is_(None))
     ).all()
-    if not est:
+    floors: dict[uuid.UUID, Decimal] = {
+        e.id: e.minimum_daily_wage
+        for e in establishments
+        if e.minimum_daily_wage is not None
+    }
+    # Somebody with no establishment is measured against the default one, if
+    # that has a floor. No default and no attachment means no check — silence
+    # is correct when nobody has said which jurisdiction applies.
+    default_floor: Decimal | None = next(
+        (
+            e.minimum_daily_wage
+            for e in establishments
+            if e.is_default and e.minimum_daily_wage is not None
+        ),
+        None,
+    )
+    if not floors:
         return []
 
-    floor = min(e.minimum_daily_wage for e in est if e.minimum_daily_wage)
     _, end = ledger.month_bounds(period)
     findings: list[Finding] = []
 
@@ -172,6 +187,13 @@ def _minimum_wage(
             Employee.status != "exited", Employee.deleted_at.is_(None)
         )
     ).all():
+        floor = (
+            floors.get(emp.establishment_id, default_floor)
+            if emp.establishment_id is not None
+            else default_floor
+        )
+        if floor is None:
+            continue
         facts = ledger.approved_work_facts(db, emp.id, period, end)
         worked = sum(1 for f in facts if f.status == "worked")
         if worked == 0:

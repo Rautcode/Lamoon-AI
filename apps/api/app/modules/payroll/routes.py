@@ -49,6 +49,7 @@ from app.modules.payroll.schemas import (
     SalaryStructureIn,
     SalaryStructureOut,
 )
+from app.modules.payroll.workforce import Establishment
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
 CAN_READ = [Depends(require("payroll.read"))]
@@ -106,34 +107,69 @@ def create_component(
 
 
 @router.get("/pt-slabs", response_model=list[PTSlabOut], dependencies=CAN_READ)
-def list_pt_slabs(db: Session = Depends(get_db), _cid: str = Depends(resolve_tenant)):
+def list_pt_slabs(
+    establishment_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+    _cid: str = Depends(resolve_tenant),
+):
+    """One state's schedule, or the company-wide one when no establishment is
+    named. Schedules are never merged — mixing two states' slabs would produce
+    a deduction that belongs to neither."""
     rows = db.scalars(
-        select(ProfessionalTaxSlab).where(ProfessionalTaxSlab.deleted_at.is_(None))
+        select(ProfessionalTaxSlab).where(
+            ProfessionalTaxSlab.deleted_at.is_(None),
+            ProfessionalTaxSlab.establishment_id == establishment_id
+            if establishment_id is not None
+            else ProfessionalTaxSlab.establishment_id.is_(None),
+        )
     ).all()
     return sorted(rows, key=lambda s: (s.up_to is None, s.up_to or 0))
 
 
 @router.put("/pt-slabs", response_model=list[PTSlabOut], dependencies=CAN_WRITE)
 def replace_pt_slabs(
-    body: list[PTSlabIn], db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+    body: list[PTSlabIn],
+    establishment_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+    cid: str = Depends(resolve_tenant),
 ):
-    """Replace the whole schedule. A state's PT table is edited as a unit —
-    patching one slab of a slab schedule is how you end up with a gap."""
+    """Replace one jurisdiction's schedule. A state's PT table is edited as a
+    unit — patching one slab of a slab schedule is how you end up with a gap.
+
+    Scoped: replacing Maharashtra's schedule must not touch Karnataka's."""
     company_id = uuid.UUID(cid)
     if sum(1 for s in body if s.up_to is None) > 1:
         raise HTTPException(422, "only one slab can be unbounded (up_to = null)")
+    if establishment_id is not None:
+        est = db.get(Establishment, establishment_id)
+        if est is None or est.deleted_at is not None:
+            raise HTTPException(404, "establishment not found")
 
     now = datetime.now(UTC)
     for old in db.scalars(
-        select(ProfessionalTaxSlab).where(ProfessionalTaxSlab.deleted_at.is_(None))
+        select(ProfessionalTaxSlab).where(
+            ProfessionalTaxSlab.deleted_at.is_(None),
+            ProfessionalTaxSlab.establishment_id == establishment_id
+            if establishment_id is not None
+            else ProfessionalTaxSlab.establishment_id.is_(None),
+        )
     ).all():
         old.deleted_at = now
-    slabs = [ProfessionalTaxSlab(company_id=company_id, **s.model_dump()) for s in body]
+    slabs = [
+        ProfessionalTaxSlab(
+            company_id=company_id, establishment_id=establishment_id, **s.model_dump()
+        )
+        for s in body
+    ]
     db.add_all(slabs)
     db.flush()
     audit.record(
         db, company_id=company_id, entity="pt_slabs", entity_id=company_id,
-        action="replaced", payload={"slabs": [s.model_dump(mode="json") for s in body]},
+        action="replaced",
+        payload={
+            "establishment_id": str(establishment_id) if establishment_id else None,
+            "slabs": [s.model_dump(mode="json") for s in body],
+        },
     )
     return sorted(slabs, key=lambda s: (s.up_to is None, s.up_to or 0))
 
