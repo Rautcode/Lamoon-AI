@@ -253,6 +253,67 @@ def rebuild(
     return inputs_for(db, employee.id, period)
 
 
+def rebuild_period(
+    db: Session, *, company_id: uuid.UUID, period: date, employee_id: uuid.UUID | None = None
+) -> dict:
+    """Regenerate the derived half of the ledger for a period, without
+    computing payroll.
+
+    Exists because looking at the ledger and paying against it are separate
+    acts. An operator wants to see what August will consist of — and correct
+    it — before anything is calculated, and a payroll run is a heavy and
+    consequential way to ask that question.
+
+    Idempotent: derived rows are replaced, manual entries and adjustments are
+    left standing. Running it twice produces the same ledger.
+    """
+    from app.modules.payroll import service
+
+    period = period.replace(day=1)
+    _, end = month_bounds(period)
+    _, _, working_days = service.calendar_context(db, company_id, period)
+
+    stmt = select(Employee).where(
+        Employee.status != "exited", Employee.deleted_at.is_(None)
+    )
+    if employee_id is not None:
+        stmt = stmt.where(Employee.id == employee_id)
+    employees = db.scalars(stmt).all()
+
+    rebuilt = 0
+    derived = 0
+    preserved = 0
+    pending = 0
+    for employee in employees:
+        # Nobody is on the payroll for a month that ended before they joined,
+        # so generating inputs for them would be noise in the exception list.
+        if employee.joined_on and employee.joined_on > end:
+            continue
+        rebuild(
+            db, company_id=company_id, employee=employee, period=period,
+            working_days=working_days,
+        )
+        rebuilt += 1
+        # Counted through the OPERATOR's view, not the engine's. `inputs_for`
+        # hides unapproved rows because payroll must not pay them — but an
+        # unapproved entry is precisely what somebody needs to go and approve,
+        # so reporting it as "gone" would be a lie about their own data.
+        rows = inputs_for(db, employee.id, period, include_unapproved=True)
+        derived += sum(1 for r in rows if r.source in ("structure", "work_facts"))
+        preserved += sum(1 for r in rows if r.source not in ("structure", "work_facts"))
+        pending += sum(
+            1 for r in rows if r.source != "structure" and r.approved_at is None
+        )
+
+    return {
+        "period": period,
+        "employees": rebuilt,
+        "derived": derived,
+        "preserved": preserved,
+        "pending": pending,
+    }
+
+
 def statutory_wage_from_inputs(
     inputs: list[PayrollInput], period: date
 ) -> rules.WageBasis:

@@ -49,6 +49,26 @@ def month_bounds(period: date) -> tuple[date, date]:
     return first, first.replace(day=calendar.monthrange(first.year, first.month)[1])
 
 
+def calendar_context(
+    db: Session, company_id: uuid.UUID, period: date
+) -> tuple[str, set[date], int]:
+    """The work-week pattern, the month's holidays, and its working-day count.
+
+    ONE implementation, because several things divide by that count: leave
+    proration, mid-month joiner proration, and the overtime hourly rate. A
+    second copy would price overtime differently depending on which code path
+    reached it, which is the kind of bug nobody finds until an employee does.
+    """
+    start, end = month_bounds(period)
+    cal = work_calendar.get_calendar(db, company_id)
+    holidays = set(work_calendar.holidays_between(db, start, end))
+    return (
+        cal.working_days,
+        holidays,
+        work_calendar.count_working_days(start, end, cal.working_days, holidays),
+    )
+
+
 def get_settings(db: Session, company_id: uuid.UUID) -> PayrollSettings:
     row = db.scalar(select(PayrollSettings).where(PayrollSettings.deleted_at.is_(None)))
     if row is None:
@@ -167,14 +187,10 @@ def pre_joining_days(db: Session, company_id: uuid.UUID, employee: Employee, per
     if employee.joined_on <= start:
         return 0
 
-    cal = work_calendar.get_calendar(db, company_id)
-    holidays = set(work_calendar.holidays_between(db, start, end))
-    working_days = work_calendar.count_working_days(start, end, cal.working_days, holidays)
+    pattern, holidays, working_days = calendar_context(db, company_id, period)
     if employee.joined_on > end:
         return working_days  # not on the payroll for any of this month
-    payable = work_calendar.count_working_days(
-        employee.joined_on, end, cal.working_days, holidays
-    )
+    payable = work_calendar.count_working_days(employee.joined_on, end, pattern, holidays)
     return working_days - payable
 
 
@@ -227,11 +243,8 @@ def compute_payslip(
     function of its arguments, and therefore idempotent: feeding its own output
     back in produces the same result. Use `lop_for()` to obtain the value.
     """
-    start, end = month_bounds(period)
-    cal = work_calendar.get_calendar(db, company_id)
-    holidays = set(work_calendar.holidays_between(db, start, end))
-    working_days = work_calendar.count_working_days(start, end, cal.working_days, holidays)
-
+    start, _ = month_bounds(period)
+    _, _, working_days = calendar_context(db, company_id, period)
     lop_days = max(0, min(lop_days, working_days))
     paid_days = working_days - lop_days
     # A zero-working-day month (every day a declared holiday) would otherwise
@@ -423,11 +436,7 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
 
     # The ledger is regenerated from salary structures and approved work facts
     # before anything is computed. Manual entries and adjustments survive.
-    cal = work_calendar.get_calendar(db, company_id)
-    holidays = set(work_calendar.holidays_between(db, *month_bounds(run.period)))
-    month_working_days = work_calendar.count_working_days(
-        *month_bounds(run.period), cal.working_days, holidays
-    )
+    _, _, month_working_days = calendar_context(db, company_id, run.period)
     for employee in employees:
         if employee.joined_on and employee.joined_on > end:
             continue

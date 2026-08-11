@@ -360,3 +360,22 @@ class AssignmentOut(BaseModel):
     assigned: int
     #: Periods already finalized are untouched — this only affects future runs.
     note: str
+
+
+class RebuildIn(BaseModel):
+    period: date
+    #: Narrow to one person. Omit to regenerate everybody's.
+    employee_id: uuid.UUID | None = None
+
+
+class RebuildOut(BaseModel):
+    period: date
+    employees: int
+    #: Rows regenerated from salary structures and approved work facts.
+    derived: int
+    #: Manual entries and adjustments left standing — regeneration must never
+    #: destroy what a person entered.
+    preserved: int
+    #: Of those, how many are still waiting for approval. Payroll will not pay
+    #: them until somebody signs them off.
+    pending: int

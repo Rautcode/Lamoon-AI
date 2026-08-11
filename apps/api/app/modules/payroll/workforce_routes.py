@@ -40,6 +40,8 @@ from app.modules.payroll.schemas import (
     FindingOut,
     PayrollInputIn,
     PayrollInputOut,
+    RebuildIn,
+    RebuildOut,
     ValidationOut,
     WorkFactIn,
     WorkFactOut,
@@ -388,6 +390,40 @@ def list_inputs(
     return ledger.inputs_for(
         db, employee_id, _period(period), include_unapproved=include_unapproved
     )
+
+
+@ledger_router.post("/inputs/rebuild", response_model=RebuildOut, dependencies=CAN_WRITE_PAY)
+def rebuild_ledger(
+    body: RebuildIn, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Regenerate the ledger for a period without computing payroll.
+
+    Looking at what a period will consist of, and paying against it, are
+    separate acts. This lets an operator review and correct the inputs first —
+    a payroll run is a heavy and consequential way to ask what August contains.
+
+    Idempotent, and safe to call as often as you like: derived rows are
+    replaced, manual entries and adjustments are left standing.
+    """
+    company_id = uuid.UUID(cid)
+    period = _period(body.period)
+    _refuse_if_closed(db, period)
+    if body.employee_id is not None:
+        _employee_or_404(db, body.employee_id)
+
+    summary = ledger.rebuild_period(
+        db, company_id=company_id, period=period, employee_id=body.employee_id
+    )
+    audit.record(
+        db, company_id=company_id, entity="payroll_input", entity_id=company_id,
+        action="ledger_rebuilt",
+        payload={
+            "period": period.isoformat(),
+            "employees": summary["employees"],
+            "employee_id": str(body.employee_id) if body.employee_id else None,
+        },
+    )
+    return RebuildOut(**summary)
 
 
 @ledger_router.post("/inputs", response_model=PayrollInputOut, dependencies=CAN_WRITE_PAY)
