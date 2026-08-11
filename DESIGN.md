@@ -90,7 +90,8 @@ lookup. The loop is bounded to 3 steps so a confused model can't spin.
     /time                  Leave — decisions first, then history
     /attendance            Presence now + a 14-day hours heatmap
                              (weekends/holidays marked, not blank)
-    /pay                   Payroll runs. HR/admin only — NOT managers
+    /pay                   Payroll: exceptions, register, per-person input
+                             ledger. HR/admin only — NOT managers
     /org                   Department tree + unassigned people
 ```
 

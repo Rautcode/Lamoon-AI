@@ -152,13 +152,37 @@ export type WorkWeek = {
 /** One line on a payslip. Amounts are strings: they come from Postgres
  *  NUMERIC and must not round-trip through a JS number, which cannot hold
  *  every rupee-and-paise value exactly. Format them, don't compute with them. */
-export type PayLine = { code: string; name: string; amount: string };
+export type PayLine = {
+  code: string;
+  name: string;
+  amount: string;
+  /** Where the line came from, once the input ledger generated it. */
+  source?: string;
+  /** e.g. "6.00 x 250.00" for an overtime line. */
+  basis?: string;
+};
 
 export type PayslipBreakdown = {
   earnings: PayLine[];
   deductions: PayLine[];
   employer_contributions: PayLine[];
-  basis: { pf_wage: string; esi_wage: string; proration: string };
+  basis: {
+    pf_wage: string;
+    esi_wage: string;
+    proration: string;
+    /** How the statutory wage was derived. Present from the Code on Wages
+     *  engine onward; absent on payslips frozen before it. */
+    statutory_wage?: string;
+    nominated_wages?: string;
+    excluded_allowances?: string;
+    remuneration?: string;
+    added_back?: string;
+    /** Why the employer's 12% split the way it did. */
+    eps?: string;
+  };
+  /** The rules this payslip was computed under, resolved by PERIOD. A frozen
+   *  payslip records these so it stays defensible years later. */
+  rule_versions?: { wage_definition: string; epf: string; esi: string };
 };
 
 export type Payslip = {
@@ -248,4 +272,57 @@ export type SalaryStructure = {
   employee_id: string;
   components: SalaryLine[];
   monthly_gross: string;
+};
+
+/** One thing wrong, or one thing worth a second look. `impact` is money at
+ *  stake where it can be estimated — null means "not quantifiable", which is
+ *  different from zero. */
+export type Finding = {
+  code: string;
+  severity: "blocking" | "warning" | "info";
+  message: string;
+  employee_id: string | null;
+  employee_name: string | null;
+  impact: string | null;
+  detail: Record<string, string>;
+};
+
+/** Validation and risk share a shape but are never merged: validation asks
+ *  whether the inputs are valid, risk asks whether anything looks unusual. */
+export type FindingReport = {
+  period: string;
+  blocking: number;
+  warnings: number;
+  info: number;
+  impact: string;
+  groups: { code: string; severity: string; count: number; impact: string }[];
+  findings: Finding[];
+};
+
+/** One approved input for one employee for one period. Carries its own
+ *  provenance — payroll asks what was approved, not what someone is paid. */
+export type PayrollInput = {
+  id: string;
+  employee_id: string;
+  period: string;
+  kind: "earning" | "deduction" | "overtime" | "lop" | "adjustment" | "tax";
+  code: string;
+  name: string;
+  amount: string;
+  quantity: string | null;
+  rate: string | null;
+  wage_basis: "wages" | "excluded" | "outside";
+  source: "structure" | "work_facts" | "manual" | "import" | "adjustment";
+  reason: string | null;
+  approved_at: string | null;
+  locked: boolean;
+  sequence: number;
+};
+
+export type RebuildResult = {
+  period: string;
+  employees: number;
+  derived: number;
+  preserved: number;
+  pending: number;
 };

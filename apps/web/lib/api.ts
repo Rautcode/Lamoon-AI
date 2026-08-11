@@ -15,8 +15,11 @@ import type {
   NewDepartment,
   NewPayComponent,
   PayComponent,
+  FindingReport,
+  PayrollInput,
   PayrollRun,
   PayrollRunDetail,
+  RebuildResult,
   PayrollSettings,
   Payslip,
   PTSlab,
@@ -217,6 +220,28 @@ export const api = {
       }),
     finalize: (id: string) =>
       request<PayrollRun>(`/payroll/runs/${id}/finalize`, { method: "POST" }),
+    /** Are the inputs valid? Blocking findings exclude someone from the run. */
+    validation: (period: string) =>
+      request<FindingReport>(`/payroll/validation?period=${period}`),
+    /** Does anything look unusual? Separate from validation on purpose — every
+     *  one of these may be entirely correct. */
+    risk: (period: string) => request<FindingReport>(`/payroll/risk?period=${period}`),
+    /** Regenerate the ledger without computing payroll, so the inputs can be
+     *  reviewed and corrected before anything is paid. */
+    rebuild: (period: string, employee_id?: string) =>
+      request<RebuildResult>("/payroll/inputs/rebuild", {
+        method: "POST",
+        body: JSON.stringify({ period, employee_id }),
+      }),
+    inputs: (employeeId: string, period: string) =>
+      request<PayrollInput[]>(
+        `/payroll/inputs?employee_id=${employeeId}&period=${period}`
+      ),
+    approveInputs: (ids: string[]) =>
+      request<PayrollInput[]>("/payroll/inputs/approve", {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      }),
     settings: () => request<PayrollSettings>("/payroll/settings"),
     setSettings: (body: PayrollSettings) =>
       request<PayrollSettings>("/payroll/settings", {

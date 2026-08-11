@@ -1,12 +1,14 @@
 "use client";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lock, RefreshCw, Settings2 } from "lucide-react";
+import { Lock, RefreshCw, Settings2, ListChecks } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { hasPermission, useAuthStore } from "@/lib/auth-store";
 import type { Payslip } from "@/lib/types";
 import { Action, Avatar, Empty, Pill, SectionLabel, Status } from "@/components/lamoon/primitives";
 import { PayrollSetup } from "@/components/lamoon/payroll-setup";
+import { PayrollExceptions } from "@/components/lamoon/payroll-exceptions";
+import { PayrollLedger } from "@/components/lamoon/payroll-ledger";
 import { Input } from "@/components/ui/input";
 
 /* Payroll.
@@ -126,11 +128,39 @@ function PayslipDetail({
         </p>
       </div>
 
-      <div className="sm:col-span-3">
+      <div className="sm:col-span-3 space-y-1">
         <p className="t-meta">
           {slip.breakdown.basis.proration} · PF wage {rupees(slip.breakdown.basis.pf_wage)} · ESI
           wage {rupees(slip.breakdown.basis.esi_wage)}
         </p>
+        {/* The statutory wage is derived, not nominated. Showing the working is
+            the difference between a number you can defend and one you can only
+            reproduce. */}
+        {slip.breakdown.basis.statutory_wage && (
+          <p className="t-meta">
+            Statutory wage {rupees(slip.breakdown.basis.statutory_wage)} — wages{" "}
+            {rupees(slip.breakdown.basis.nominated_wages ?? "0")}
+            {Number(slip.breakdown.basis.added_back ?? 0) > 0 && (
+              <>
+                {" "}+ {rupees(slip.breakdown.basis.added_back!)} added back, allowances
+                above half of {rupees(slip.breakdown.basis.remuneration ?? "0")}
+              </>
+            )}
+          </p>
+        )}
+        {slip.breakdown.basis.eps && (
+          <p className="t-meta">Pension: {slip.breakdown.basis.eps}</p>
+        )}
+        {slip.breakdown.rule_versions && (
+          <p className="t-meta">
+            Computed under {slip.breakdown.rule_versions.wage_definition} ·{" "}
+            {slip.breakdown.rule_versions.epf} · {slip.breakdown.rule_versions.esi}
+          </p>
+        )}
+      </div>
+
+      <div className="sm:col-span-3 border-t border-[var(--hairline)] pt-4">
+        <PayrollLedger employeeId={slip.employee_id} period={slip.period} editable={editable} />
       </div>
 
       {editable && (
@@ -206,6 +236,7 @@ export default function PayPage() {
   // month" is the wrong default to be locked to — and once it's finalized the
   // button had no other period to offer.
   const [month, setMonth] = useState(periodToMonthInput(thisMonth()));
+  const [rebuilt, setRebuilt] = useState<string | null>(null);
   const canWrite = hasPermission(useAuthStore((s) => s.permissions), "payroll.write");
 
   const runs = useQuery({ queryKey: ["payroll-runs"], queryFn: api.payroll.runs });
@@ -226,6 +257,21 @@ export default function PayPage() {
       qc.invalidateQueries({ queryKey: ["payroll-run", detail.id] });
     },
     onError: (e) => setError(e instanceof ApiError ? e.message : "Could not compute"),
+  });
+
+  const rebuild = useMutation({
+    mutationFn: () => api.payroll.rebuild(monthInputToPeriod(month)),
+    onSuccess: (r) => {
+      setError(null);
+      setRebuilt(
+        `Ledger rebuilt for ${r.employees} people — ${r.derived} generated, ` +
+          `${r.preserved} entered by hand kept` +
+          (r.pending > 0 ? `, ${r.pending} awaiting approval.` : ".")
+      );
+      qc.invalidateQueries({ queryKey: ["payroll-validation"] });
+      qc.invalidateQueries({ queryKey: ["payroll-inputs"] });
+    },
+    onError: (e) => setError(e instanceof ApiError ? e.message : "Could not rebuild"),
   });
 
   const finalize = useMutation({
@@ -250,6 +296,12 @@ export default function PayPage() {
             <Action variant="quiet" onClick={() => setConfiguring((v) => !v)}>
               <Settings2 className="size-4" aria-hidden />
               Setup
+            </Action>
+            {/* Seeing what a period consists of and paying it are separate
+                acts. This does the first without doing the second. */}
+            <Action variant="quiet" onClick={() => rebuild.mutate()} disabled={rebuild.isPending}>
+              <ListChecks className="size-4" aria-hidden />
+              {rebuild.isPending ? "Rebuilding…" : "Rebuild inputs"}
             </Action>
             <label className="flex items-center gap-2">
               <span className="sr-only">Payroll month</span>
@@ -276,6 +328,7 @@ export default function PayPage() {
       </header>
 
       {error && <p className="mt-4 text-[0.8125rem] text-[var(--critical)]">{error}</p>}
+      {rebuilt && !error && <p className="t-meta mt-4">{rebuilt}</p>}
 
       {configuring && canWrite && (
         <div className="mt-6">
@@ -368,7 +421,11 @@ export default function PayPage() {
             </p>
           )}
 
-          <div className="mt-10">
+          <div className="mt-12">
+            <PayrollExceptions period={detail.period} />
+          </div>
+
+          <div className="mt-12">
             <SectionLabel>
               {detail.payslips.length} payslip{detail.payslips.length === 1 ? "" : "s"} ·{" "}
               {monthLabel(detail.period)}
