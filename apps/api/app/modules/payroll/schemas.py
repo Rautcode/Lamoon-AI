@@ -406,3 +406,51 @@ class ReadinessOut(BaseModel):
     #: than counted as passing.
     unknown: int
     checks: list[ReadinessCheck]
+
+
+class MovementTotals(BaseModel):
+    employees: int
+    gross: Decimal
+    deductions: Decimal
+    net: Decimal
+    employer_cost: Decimal
+    pf: Decimal
+    esi: Decimal
+    pt: Decimal
+    tds: Decimal
+
+
+class MovementLine(BaseModel):
+    code: str
+    label: str
+    previous: Decimal
+    current: Decimal
+    change: Decimal
+
+
+class BridgeLine(BaseModel):
+    code: str
+    label: str
+    amount: Decimal
+    #: Headcount behind the line, where the cause is people rather than rates.
+    count: int | None = None
+
+
+class MovementOut(BaseModel):
+    """Why the number changed.
+
+    `comparable` is false when there is no prior period — a first payroll has
+    nothing to move from, and reporting a baseline of zero would call it
+    infinite growth.
+    """
+
+    period: date
+    previous_period: date
+    comparable: bool
+    current: MovementTotals
+    previous: MovementTotals
+    lines: list[MovementLine]
+    bridge: list[BridgeLine]
+    #: Should always be zero. Published rather than absorbed, so a
+    #: decomposition that stops closing is visible instead of silently wrong.
+    unexplained: Decimal

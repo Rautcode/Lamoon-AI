@@ -346,3 +346,46 @@ export type Readiness = {
   unknown: number;
   checks: ReadinessCheck[];
 };
+
+export type MovementTotals = {
+  employees: number;
+  gross: string;
+  deductions: string;
+  net: string;
+  employer_cost: string;
+  pf: string;
+  esi: string;
+  pt: string;
+  tds: string;
+};
+
+export type MovementLine = {
+  code: string;
+  label: string;
+  previous: string;
+  current: string;
+  change: string;
+};
+
+/** One cause of the change in gross. `count` is headcount where the cause is
+ *  people rather than rates. */
+export type BridgeLine = {
+  code: string;
+  label: string;
+  amount: string;
+  count: number | null;
+};
+
+export type Movement = {
+  period: string;
+  previous_period: string;
+  /** False when there is no prior period — a first payroll has nothing to
+   *  move from. */
+  comparable: boolean;
+  current: MovementTotals;
+  previous: MovementTotals;
+  lines: MovementLine[];
+  bridge: BridgeLine[];
+  /** Should always be zero. Shown if it ever isn't. */
+  unexplained: string;
+};

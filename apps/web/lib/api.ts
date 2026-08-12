@@ -17,6 +17,7 @@ import type {
   PayComponent,
   FindingReport,
   PayrollInput,
+  Movement,
   PayrollRun,
   PayrollRunDetail,
   Readiness,
@@ -221,6 +222,8 @@ export const api = {
       }),
     finalize: (id: string) =>
       request<PayrollRun>(`/payroll/runs/${id}/finalize`, { method: "POST" }),
+    /** Period-on-period totals, and a bridge explaining the change in gross. */
+    movement: (period: string) => request<Movement>(`/payroll/movement?period=${period}`),
     /** Can payroll run at all? Configuration and coverage, per company —
      *  distinct from validation, which is per employee. */
     readiness: (period: string) =>

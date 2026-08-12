@@ -20,7 +20,7 @@ timing out — the run row already has the status field a job would report into.
 """
 import calendar
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -433,6 +433,7 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
     gross_total = deductions_total = net_total = employer_total = ZERO
     admin_charged = ZERO
     contributing_members = 0
+    paid: set[uuid.UUID] = set()
 
     # The ledger is regenerated from salary structures and approved work facts
     # before anything is computed. Manual entries and adjustments survive.
@@ -474,6 +475,7 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
             setattr(slip, field, computed[field])
         if prior is None:
             db.add(slip)
+        paid.add(employee.id)
 
         gross_total += computed["gross"]
         deductions_total += computed["deductions"]
@@ -482,6 +484,15 @@ def build_run(db: Session, *, company_id: uuid.UUID, run: PayrollRun) -> Payroll
         admin_charged += computed["employer_admin"]
         if computed["employer_admin"] > ZERO:
             contributing_members += 1
+
+    # Anyone who had a payslip but is no longer eligible loses it. Without
+    # this, recomputing UPDATES and CREATES but never REMOVES: exit somebody
+    # mid-draft, recompute, and their payslip sits there at full pay and counts
+    # toward the totals. A leaver kept being paid.
+    now = datetime.now(UTC)
+    for employee_id, slip in existing.items():
+        if employee_id not in paid:
+            slip.deleted_at = now
 
     # The EPF administration minimum is per establishment per month, so it can
     # only be settled once every payslip is known.

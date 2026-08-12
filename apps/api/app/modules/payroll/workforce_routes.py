@@ -29,7 +29,7 @@ from app.core.rbac import current_user, require
 from app.core.tenant import resolve_tenant
 from app.modules.audit import service as audit
 from app.modules.hr_core.models import Employee
-from app.modules.payroll import ledger, readiness, validation
+from app.modules.payroll import ledger, movement, readiness, validation
 from app.modules.payroll.models import PayrollRun
 from app.modules.payroll.schemas import (
     ApproveIn,
@@ -38,6 +38,7 @@ from app.modules.payroll.schemas import (
     EstablishmentIn,
     EstablishmentOut,
     FindingOut,
+    MovementOut,
     PayrollInputIn,
     PayrollInputOut,
     ReadinessOut,
@@ -533,6 +534,20 @@ def _findings_out(findings: list[validation.Finding]) -> list[FindingOut]:
         )
         for f in findings
     ]
+
+
+@ledger_router.get("/movement", response_model=MovementOut, dependencies=CAN_READ_PAY)
+def run_movement(
+    period: date, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Period-on-period totals, and a bridge explaining the change in gross.
+
+    The bridge sums exactly to the change it explains; whatever is left over
+    comes back as `unexplained` rather than being folded into a bucket.
+    """
+    return MovementOut(
+        **movement.compare(db, company_id=uuid.UUID(cid), period=_period(period))
+    )
 
 
 @ledger_router.get("/readiness", response_model=ReadinessOut, dependencies=CAN_READ_PAY)
