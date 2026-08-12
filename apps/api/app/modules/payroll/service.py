@@ -14,9 +14,17 @@ counts a day one way for the balance and another way for the money will be
 asked to explain the difference. Both figures are on the payslip so the
 arithmetic can be checked by hand.
 
-ponytail: runs synchronously. At a few hundred employees that's a second or
-two inside the request. Move to a Celery job when a customer's run starts
-timing out — the run row already has the status field a job would report into.
+ponytail: runs synchronously, and costs ~14 queries and ~11ms per employee —
+measured, not guessed: 25 → 0.41s, 100 → 1.18s, 300 → 3.35s against a local
+Postgres. Linear, every hot column indexed, so the cost is round-trip COUNT,
+not scan time; over a real network the per-query latency dominates.
+
+That puts the ceiling near a thousand employees for a request anyone would
+wait on. Two fixes in order when a customer gets there: hoist the per-employee
+lookups (settings, establishment, PT slabs, rules) out of the loop and prefetch
+salary structures and ledger inputs in bulk — that alone should take 14 q/emp
+to about 2 — then move the run to a Celery job. The run row already has the
+status field a job would report into.
 """
 import calendar
 import uuid
