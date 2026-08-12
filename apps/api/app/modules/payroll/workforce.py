@@ -202,3 +202,62 @@ class PayrollInput(TenantBase):
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
     #: Ordering on the payslip, carried from the component.
     sequence: Mapped[int] = mapped_column(Integer, default=100)
+
+
+#: An arrear pays somebody more; a recovery takes it back. Kept as a direction
+#: rather than a signed amount because "−2,400" on a screen is ambiguous about
+#: whether it was owed or overpaid, and an operator has to type it correctly
+#: under time pressure.
+ADJUSTMENT_KINDS = ("arrear", "recovery")
+
+
+class PayrollAdjustment(TenantBase):
+    """A correction to a FINALIZED period, applied in a later one.
+
+    The whole point of an immutable run is that April's payslips stay what was
+    paid in April. So a mistake found in May is not fixed by editing April —
+    it is recorded against April and settled in May, which is also how payroll
+    corrections work on paper and what makes the two months reconcile.
+
+        April  finalized, wrong by 2,400
+          └─ adjustment: source April, target May, +2,400, "2 days unpaid in error"
+               └─ becomes a payroll input in May, source="adjustment"
+                    └─ May payslip: "April arrear  2,400"
+
+    Approving it is what creates the ledger row. Until then it is a proposal:
+    somebody has said what they think went wrong, and nobody has agreed to pay
+    it.
+    """
+
+    __tablename__ = "payroll_adjustments"
+
+    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("employees.id"), index=True)
+    #: The finalized month being corrected. Kept for lineage — both months have
+    #: to be explicable afterwards, and "why is May 2,400 higher" is answered
+    #: by pointing at April.
+    source_period: Mapped[date] = mapped_column(Date, index=True)
+    #: The open month it lands in.
+    target_period: Mapped[date] = mapped_column(Date, index=True)
+
+    kind: Mapped[str] = mapped_column(String(10))  # arrear | recovery
+    code: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(120))
+    #: Always positive. Direction lives in `kind`.
+    amount: Mapped[Decimal] = mapped_column(MONEY)
+    #: Required. A correction without a stated reason is indistinguishable
+    #: from someone changing a number they did not like.
+    reason: Mapped[str] = mapped_column(Text)
+
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: The ledger row this produced. Set on approval; the link is what lets a
+    #: cancellation withdraw the money as well as the paperwork.
+    applied_input_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("payroll_inputs.id"), nullable=True
+    )

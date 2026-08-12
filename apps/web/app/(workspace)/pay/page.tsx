@@ -10,6 +10,7 @@ import { PayrollSetup } from "@/components/lamoon/payroll-setup";
 import { PayrollExceptions } from "@/components/lamoon/payroll-exceptions";
 import { PayrollReadiness } from "@/components/lamoon/payroll-readiness";
 import { PayrollMovement } from "@/components/lamoon/payroll-movement";
+import { PayrollAdjustments } from "@/components/lamoon/payroll-adjustments";
 import { PayrollLedger } from "@/components/lamoon/payroll-ledger";
 import { Input } from "@/components/ui/input";
 
@@ -433,6 +434,10 @@ export default function PayPage() {
 
           <div className="mt-12">
             <PayrollMovement period={detail.period} />
+          </div>
+
+          <div className="mt-12">
+            <PayrollAdjustments period={detail.period} editable={draft} />
           </div>
 
           <div className="mt-12">

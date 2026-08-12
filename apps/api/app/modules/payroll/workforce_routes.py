@@ -29,9 +29,11 @@ from app.core.rbac import current_user, require
 from app.core.tenant import resolve_tenant
 from app.modules.audit import service as audit
 from app.modules.hr_core.models import Employee
-from app.modules.payroll import ledger, movement, readiness, validation
+from app.modules.payroll import adjustments, ledger, movement, readiness, validation
 from app.modules.payroll.models import PayrollRun
 from app.modules.payroll.schemas import (
+    AdjustmentIn,
+    AdjustmentOut,
     ApproveIn,
     AssignEmployeesIn,
     AssignmentOut,
@@ -48,7 +50,12 @@ from app.modules.payroll.schemas import (
     WorkFactIn,
     WorkFactOut,
 )
-from app.modules.payroll.workforce import Establishment, PayrollInput, WorkFact
+from app.modules.payroll.workforce import (
+    Establishment,
+    PayrollAdjustment,
+    PayrollInput,
+    WorkFact,
+)
 
 facts_router = APIRouter(prefix="/workforce", tags=["workforce"])
 ledger_router = APIRouter(prefix="/payroll", tags=["payroll"])
@@ -534,6 +541,104 @@ def _findings_out(findings: list[validation.Finding]) -> list[FindingOut]:
         )
         for f in findings
     ]
+
+
+# --- adjustments: the only lawful way to correct a closed month -------------
+
+
+@ledger_router.get(
+    "/adjustments", response_model=list[AdjustmentOut], dependencies=CAN_READ_PAY
+)
+def list_adjustments(
+    target_period: date | None = None,
+    employee_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+    _cid: str = Depends(resolve_tenant),
+):
+    return adjustments.for_period(
+        db, target_period=target_period, employee_id=employee_id
+    )
+
+
+@ledger_router.post("/adjustments", response_model=AdjustmentOut, dependencies=CAN_WRITE_PAY)
+def create_adjustment(
+    body: AdjustmentIn,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
+    cid: str = Depends(resolve_tenant),
+):
+    """Record a correction to a finalized period.
+
+    Creates no money. Approving it does — so a mistake can be written down by
+    whoever spotted it without that person also being able to pay it.
+    """
+    company_id = uuid.UUID(cid)
+    _employee_or_404(db, body.employee_id)
+    try:
+        row = adjustments.create(
+            db, company_id=company_id, created_by=uuid.UUID(principal.user_id),
+            **body.model_dump(),
+        )
+    except adjustments.AdjustmentError as e:
+        raise HTTPException(422, str(e)) from None
+
+    audit.record(
+        db, company_id=company_id, entity="payroll_adjustment", entity_id=row.id,
+        action="raised",
+        payload={
+            "source_period": row.source_period.isoformat(),
+            "target_period": row.target_period.isoformat(),
+            "kind": row.kind, "reason": row.reason,
+        },
+    )
+    return row
+
+
+@ledger_router.post(
+    "/adjustments/{adjustment_id}/approve", response_model=AdjustmentOut,
+    dependencies=CAN_WRITE_PAY,
+)
+def approve_adjustment(
+    adjustment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
+    cid: str = Depends(resolve_tenant),
+):
+    """Agree to settle it. THIS is what puts it in the ledger."""
+    row = db.get(PayrollAdjustment, adjustment_id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(404, "adjustment not found")
+    try:
+        adjustments.approve(db, adjustment=row, approved_by=uuid.UUID(principal.user_id))
+    except adjustments.AdjustmentError as e:
+        raise HTTPException(422, str(e)) from None
+
+    audit.record(
+        db, company_id=uuid.UUID(cid), entity="payroll_adjustment", entity_id=row.id,
+        action="approved",
+        payload={"target_period": row.target_period.isoformat(), "kind": row.kind},
+    )
+    return row
+
+
+@ledger_router.delete(
+    "/adjustments/{adjustment_id}", status_code=204, dependencies=CAN_WRITE_PAY
+)
+def cancel_adjustment(
+    adjustment_id: uuid.UUID, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Withdraw it, and the ledger row with it."""
+    row = db.get(PayrollAdjustment, adjustment_id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(404, "adjustment not found")
+    try:
+        adjustments.cancel(db, adjustment=row)
+    except adjustments.AdjustmentError as e:
+        raise HTTPException(409, str(e)) from None
+    audit.record(
+        db, company_id=uuid.UUID(cid), entity="payroll_adjustment", entity_id=row.id,
+        action="cancelled",
+    )
 
 
 @ledger_router.get("/movement", response_model=MovementOut, dependencies=CAN_READ_PAY)

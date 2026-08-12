@@ -1,5 +1,6 @@
 import { useAuthStore } from "@/lib/auth-store";
 import type {
+  Adjustment,
   Application,
   AttendancePolicy,
   DaySummary,
@@ -18,6 +19,7 @@ import type {
   FindingReport,
   PayrollInput,
   Movement,
+  NewAdjustment,
   PayrollRun,
   PayrollRunDetail,
   Readiness,
@@ -222,6 +224,19 @@ export const api = {
       }),
     finalize: (id: string) =>
       request<PayrollRun>(`/payroll/runs/${id}/finalize`, { method: "POST" }),
+    /** Corrections to a finalized period, settled in a later one. */
+    adjustments: (targetPeriod: string) =>
+      request<Adjustment[]>(`/payroll/adjustments?target_period=${targetPeriod}`),
+    raiseAdjustment: (body: NewAdjustment) =>
+      request<Adjustment>("/payroll/adjustments", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    /** THIS is what puts it in the ledger. Raising one only writes it down. */
+    approveAdjustment: (id: string) =>
+      request<Adjustment>(`/payroll/adjustments/${id}/approve`, { method: "POST" }),
+    cancelAdjustment: (id: string) =>
+      request<void>(`/payroll/adjustments/${id}`, { method: "DELETE" }),
     /** Period-on-period totals, and a bridge explaining the change in gross. */
     movement: (period: string) => request<Movement>(`/payroll/movement?period=${period}`),
     /** Can payroll run at all? Configuration and coverage, per company —

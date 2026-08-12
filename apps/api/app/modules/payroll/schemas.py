@@ -11,7 +11,12 @@ from decimal import Decimal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.modules.payroll.rules import WAGE_BASIS_VALUES
-from app.modules.payroll.workforce import FACT_SOURCES, INPUT_KINDS, WORK_DAY_STATUSES
+from app.modules.payroll.workforce import (
+    ADJUSTMENT_KINDS,
+    FACT_SOURCES,
+    INPUT_KINDS,
+    WORK_DAY_STATUSES,
+)
 
 
 class PayComponentIn(BaseModel):
@@ -454,3 +459,47 @@ class MovementOut(BaseModel):
     #: Should always be zero. Published rather than absorbed, so a
     #: decomposition that stops closing is visible instead of silently wrong.
     unexplained: Decimal
+
+
+class AdjustmentIn(BaseModel):
+    """A correction to a finalized period, settled in a later one."""
+
+    employee_id: uuid.UUID
+    #: The finalized month that was wrong.
+    source_period: date
+    #: The open month it lands in.
+    target_period: date
+    #: arrear pays more, recovery takes it back. A direction rather than a
+    #: signed amount, because a minus sign on screen is ambiguous about which.
+    kind: str
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    #: Required. A correction with no stated reason is indistinguishable from
+    #: somebody changing a number they did not like.
+    reason: str = Field(min_length=3)
+    code: str | None = Field(default=None, max_length=40)
+    name: str | None = Field(default=None, max_length=120)
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in ADJUSTMENT_KINDS:
+            raise ValueError(f"kind must be one of {', '.join(ADJUSTMENT_KINDS)}")
+        return v
+
+
+class AdjustmentOut(BaseModel):
+    id: uuid.UUID
+    employee_id: uuid.UUID
+    source_period: date
+    target_period: date
+    kind: str
+    code: str
+    name: str
+    amount: Decimal
+    reason: str
+    approved_at: datetime | None
+    #: The ledger row it produced. Null until approved — until then it is a
+    #: proposal, not money.
+    applied_input_id: uuid.UUID | None
+
+    model_config = {"from_attributes": True}

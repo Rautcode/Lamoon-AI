@@ -389,3 +389,29 @@ export type Movement = {
   /** Should always be zero. Shown if it ever isn't. */
   unexplained: string;
 };
+
+/** A correction to a finalized period, settled in a later one. */
+export type Adjustment = {
+  id: string;
+  employee_id: string;
+  source_period: string;
+  target_period: string;
+  /** arrear pays more, recovery takes it back — a direction, not a sign. */
+  kind: "arrear" | "recovery";
+  code: string;
+  name: string;
+  amount: string;
+  reason: string;
+  approved_at: string | null;
+  /** Null until approved. Raising one moves no money. */
+  applied_input_id: string | null;
+};
+
+export type NewAdjustment = {
+  employee_id: string;
+  source_period: string;
+  target_period: string;
+  kind: "arrear" | "recovery";
+  amount: string;
+  reason: string;
+};
