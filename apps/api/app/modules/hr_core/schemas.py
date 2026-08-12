@@ -12,6 +12,8 @@ from datetime import date
 from pydantic import BaseModel, field_validator
 from pydantic_core.core_schema import ValidationInfo
 
+from app.modules.payroll.workforce import WORKER_TYPES
+
 
 class DepartmentIn(BaseModel):
     name: str
@@ -63,6 +65,15 @@ class EmployeeIn(BaseModel):
     is_international_worker: bool = False
     uan: str | None = None
     establishment_id: uuid.UUID | None = None
+    worker_type: str = "white_collar"
+    contractor_id: uuid.UUID | None = None
+
+    @field_validator("worker_type")
+    @classmethod
+    def _worker_type(cls, v: str) -> str:
+        if v not in WORKER_TYPES:
+            raise ValueError(f"worker_type must be one of {', '.join(WORKER_TYPES)}")
+        return v
 
 
 class EmployeeUpdate(BaseModel):
@@ -91,6 +102,15 @@ class EmployeeUpdate(BaseModel):
     is_international_worker: bool | None = None
     uan: str | None = None
     establishment_id: uuid.UUID | None = None
+    worker_type: str | None = None
+    contractor_id: uuid.UUID | None = None
+
+    @field_validator("worker_type")
+    @classmethod
+    def _worker_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in WORKER_TYPES:
+            raise ValueError(f"worker_type must be one of {', '.join(WORKER_TYPES)}")
+        return v
 
     @field_validator("full_name", "status")
     @classmethod
@@ -119,5 +139,7 @@ class EmployeeOut(BaseModel):
     is_international_worker: bool = False
     uan: str | None = None
     establishment_id: uuid.UUID | None = None
+    worker_type: str = "white_collar"
+    contractor_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}

@@ -2,6 +2,7 @@ import { useAuthStore } from "@/lib/auth-store";
 import type {
   Adjustment,
   Application,
+  Contractor,
   AttendancePolicy,
   DaySummary,
   Department,
@@ -26,6 +27,8 @@ import type {
   RebuildResult,
   PayrollSettings,
   Payslip,
+  Reconciliation,
+  WorkFact,
   PTSlab,
   SalaryStructure,
   Presence,
@@ -224,6 +227,38 @@ export const api = {
       }),
     finalize: (id: string) =>
       request<PayrollRun>(`/payroll/runs/${id}/finalize`, { method: "POST" }),
+    contractors: () => request<Contractor[]>("/payroll/contractors"),
+    /** Approved and pending days for one person. Hours and sites, not money —
+     *  which is why it sits behind workfact.read, not payroll.read. */
+    workFacts: (employeeId: string, from: string, to: string) =>
+      request<WorkFact[]>(
+        `/workforce/facts?employee_id=${employeeId}&from=${from}&to=${to}`
+      ),
+    /** What attendance says each contractor is owed, against what they
+     *  billed. Worst variance first. */
+    reconciliation: (period: string) =>
+      request<Reconciliation[]>(`/payroll/contractors/reconciliation?period=${period}`),
+    recordInvoice: (body: {
+      contractor_id: string;
+      period: string;
+      amount: string;
+      reference?: string;
+    }) =>
+      request<{ id: string; status: string }>("/payroll/contractors/invoices", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    /** Refused while the invoice disagrees with attendance. */
+    approveInvoice: (id: string) =>
+      request<{ id: string; status: string }>(
+        `/payroll/contractors/invoices/${id}/approve`,
+        { method: "POST" }
+      ),
+    disputeInvoice: (id: string) =>
+      request<{ id: string; status: string }>(
+        `/payroll/contractors/invoices/${id}/dispute`,
+        { method: "POST" }
+      ),
     /** Corrections to a finalized period, settled in a later one. */
     adjustments: (targetPeriod: string) =>
       request<Adjustment[]>(`/payroll/adjustments?target_period=${targetPeriod}`),

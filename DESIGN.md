@@ -91,8 +91,8 @@ lookup. The loop is bounded to 3 steps so a confused model can't spin.
     /attendance            Presence now + a 14-day hours heatmap
                              (weekends/holidays marked, not blank)
     /pay                   Payroll: readiness, exceptions, movement,
-                             corrections, register, per-person input
-                             ledger. HR/admin only — NOT managers
+                             corrections, contractors, register, per-person
+                             input ledger. HR/admin only — NOT managers
     /org                   Department tree + unassigned people
 ```
 
@@ -301,8 +301,14 @@ Honesty about scope matters more than a complete-looking spec:
 - **Statutory filing.** No ECR, 24Q or ESI return, no challan or
   reconciliation. Payroll computes the liability; it does not discharge it.
   This is the gap between a payroll calculator and a payroll system.
-- **Contractor workforce.** Work facts carry a site and a shift, but there is
-  no contractor, deployment or invoice-reconciliation model.
+- **Contractor workforce — partly built.** A contractor master, deployment
+  (`employee.contractor_id`) and invoice reconciliation exist: what attendance
+  says a contractor is owed, against what they billed, per worker-day. An
+  invoice can always be *recorded* whatever it says, and can only be
+  *approved* when the variance is zero — recording a disputed figure is how
+  the disagreement stays visible. What is NOT built: TDS under s.194C,
+  principal-employer liability for the contractor's own PF/ESI compliance
+  under CLRA, and paying the invoice (there is no payments module at all).
 - **F&F and gratuity**, and effective-dated salary structures.
 - **Performance, LMS, assets, documents** — no API exists for
   these. The employee profile shows only real sections rather than

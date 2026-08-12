@@ -415,3 +415,62 @@ export type NewAdjustment = {
   amount: string;
   reason: string;
 };
+
+export type Contractor = {
+  id: string;
+  name: string;
+  code: string | null;
+  contact_email: string | null;
+  licence_number: string | null;
+  gstin: string | null;
+  is_active: boolean;
+};
+
+export type ReconciliationLine = {
+  employee_id: string;
+  name: string;
+  site: string | null;
+  days_approved: number;
+  days_pending: number;
+  overtime_hours: string;
+  computed: string;
+  /** False means deployed but unpaid — worth naming before agreeing a bill. */
+  has_payslip: boolean;
+};
+
+export type Reconciliation = {
+  contractor_id: string;
+  contractor_name: string;
+  period: string;
+  workers: number;
+  computed: string;
+  /** Null, not zero, when nothing has been billed yet. */
+  invoiced: string | null;
+  variance: string | null;
+  invoice_id: string | null;
+  invoice_status: string | null;
+  invoice_reference: string | null;
+  workers_without_pay: number;
+  days_awaiting_approval: number;
+  lines: ReconciliationLine[];
+};
+
+
+/** What happened on one day. Facts, never money — the rate that turns hours
+ *  into rupees is a rule, and the amount is an input the engine derives. */
+export type WorkFact = {
+  id: string;
+  employee_id: string;
+  day: string;
+  status: "worked" | "absent" | "weekly_off" | "holiday" | "leave";
+  hours_worked: string;
+  overtime_hours: string;
+  premium_day: boolean;
+  night_shift: boolean;
+  site: string | null;
+  shift: string | null;
+  source: string;
+  note: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
+};

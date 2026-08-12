@@ -261,3 +261,66 @@ class PayrollAdjustment(TenantBase):
     applied_input_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("payroll_inputs.id"), nullable=True
     )
+
+
+#: How somebody is paid and therefore how their pay is explained. Not a job
+#: title and not a status — a monthly-salaried supervisor on a site is white
+#: collar here, and a daily-waged office cleaner is blue collar.
+WORKER_TYPES = ("white_collar", "blue_collar")
+
+
+class Contractor(TenantBase):
+    """A labour supplier whose workers are deployed to this company's sites.
+
+    Deliberately NOT an employee with a flag. A contractor is paid by invoice
+    against what their workers did, not by payslip: the company owes the
+    contractor, the contractor owes the worker. Modelling them as ordinary
+    employees would make the payroll register claim to pay people it has no
+    employment relationship with.
+    """
+
+    __tablename__ = "contractors"
+
+    name: Mapped[str] = mapped_column(String(160))
+    code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    #: Statutory identity the principal employer needs on file for a labour
+    #: contractor. Recorded, not validated — the format is not ours to police.
+    licence_number: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    gstin: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ContractorInvoice(TenantBase):
+    """What a contractor billed for a period, against what attendance says.
+
+    The variance between the two is the entire point. A contractor invoicing
+    for days nobody worked is the most common leak in site payroll, and it is
+    invisible unless the two figures sit next to each other.
+    """
+
+    __tablename__ = "contractor_invoices"
+    __table_args__ = (
+        Index(
+            "uq_contractor_invoice_period", "contractor_id", "period", unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    contractor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("contractors.id"), index=True
+    )
+    period: Mapped[date] = mapped_column(Date, index=True)
+    reference: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    amount: Mapped[Decimal] = mapped_column(MONEY)
+    #: received | approved | disputed | paid. A variance does not block
+    #: recording the invoice — it blocks agreeing to it.
+    status: Mapped[str] = mapped_column(String(12), default="received")
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+INVOICE_STATUSES = ("received", "approved", "disputed", "paid")

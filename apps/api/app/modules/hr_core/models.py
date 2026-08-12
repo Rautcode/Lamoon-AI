@@ -56,6 +56,16 @@ class Employee(TenantBase):
     #: International workers are outside the wage ceiling entirely.
     is_international_worker: Mapped[bool] = mapped_column(Boolean, default=False)
     uan: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: How this person is paid, which decides how their pay is EXPLAINED —
+    #: a monthly salary against attendance, or days and hours against a rate.
+    #: Not a job title: a salaried supervisor on a site is white collar.
+    worker_type: Mapped[str] = mapped_column(String(14), default="white_collar")
+    #: Set when this person is supplied by a labour contractor rather than
+    #: employed directly. They still have work facts and a payslip; the
+    #: reconciliation against the contractor's invoice is what differs.
+    contractor_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("contractors.id"), nullable=True
+    )
     #: Which registered place of business covers this person. Jurisdiction for
     #: professional tax and minimum wages hangs off this, not off the company.
     establishment_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -503,3 +503,76 @@ class AdjustmentOut(BaseModel):
     applied_input_id: uuid.UUID | None
 
     model_config = {"from_attributes": True}
+
+
+# --- contractors -------------------------------------------------------------
+
+
+class ContractorIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    code: str | None = Field(default=None, max_length=40)
+    contact_email: str | None = Field(default=None, max_length=200)
+    #: Statutory identity the principal employer keeps on file. Recorded, not
+    #: validated — the format is not ours to police.
+    licence_number: str | None = Field(default=None, max_length=60)
+    gstin: str | None = Field(default=None, max_length=20)
+    is_active: bool = True
+
+
+class ContractorOut(ContractorIn):
+    id: uuid.UUID
+    model_config = {"from_attributes": True}
+
+
+class InvoiceIn(BaseModel):
+    """What the contractor billed. Recorded first, agreed separately."""
+
+    contractor_id: uuid.UUID
+    period: date
+    amount: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    reference: str | None = Field(default=None, max_length=60)
+    note: str | None = None
+
+
+class InvoiceOut(BaseModel):
+    id: uuid.UUID
+    contractor_id: uuid.UUID
+    period: date
+    amount: Decimal
+    reference: str | None
+    status: str
+    note: str | None
+    approved_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class ReconciliationLine(BaseModel):
+    employee_id: uuid.UUID
+    name: str
+    site: str | None
+    days_approved: int
+    days_pending: int
+    overtime_hours: Decimal
+    computed: Decimal
+    #: False means deployed but unpaid — usually a missing salary structure,
+    #: and always worth naming before an invoice is agreed.
+    has_payslip: bool
+
+
+class ReconciliationOut(BaseModel):
+    contractor_id: uuid.UUID
+    contractor_name: str
+    period: date
+    workers: int
+    computed: Decimal
+    #: None, not zero, when nothing has been billed. Zero would read as "they
+    #: invoiced nothing", which is a different and much worse claim.
+    invoiced: Decimal | None
+    variance: Decimal | None
+    invoice_id: uuid.UUID | None
+    invoice_status: str | None
+    invoice_reference: str | None
+    workers_without_pay: int
+    days_awaiting_approval: int
+    lines: list[ReconciliationLine]

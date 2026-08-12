@@ -33,6 +33,89 @@ const SOURCE: Record<PayrollInput["source"], string> = {
   adjustment: "correction",
 };
 
+/* Work facts for the period.
+
+   Rendered only when there ARE any, which is self-selecting: a monthly-salaried
+   employee has none, so nothing appears and the white-collar view stays
+   uncluttered. A site worker has one row per day, and those days are what
+   their pay is an argument about.
+
+   Hours and sites, never money. The rate that turns them into rupees is a
+   rule, and the resulting amount is already in the ledger above. */
+function WorkFactSummary({ employeeId, period }: { employeeId: string; period: string }) {
+  const start = period;
+  const end = (() => {
+    const d = new Date(period + "T00:00:00");
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
+  })();
+
+  const { data: facts } = useQuery({
+    queryKey: ["work-facts", employeeId, period],
+    queryFn: () => api.payroll.workFacts(employeeId, start, end),
+  });
+
+  if (!facts?.length) return null;
+
+  const approved = facts.filter((f) => f.approved_at !== null);
+  const pending = facts.filter((f) => f.approved_at === null);
+  const worked = approved.filter((f) => f.status === "worked").length;
+  const overtime = approved.reduce((n, f) => n + Number(f.overtime_hours), 0);
+  const premium = approved.filter((f) => f.premium_day).length;
+  const nights = approved.filter((f) => f.night_shift).length;
+  const site = facts.find((f) => f.site)?.site;
+  const shift = facts.find((f) => f.shift)?.shift;
+
+  return (
+    <div className="mt-6">
+      <SectionLabel>Work this period</SectionLabel>
+      <div className="flex flex-wrap gap-x-8 gap-y-2 text-[0.8125rem]">
+        <span>
+          <span className="t-meta block">Days worked</span>
+          <span className="tabular-nums">{worked}</span>
+        </span>
+        {overtime > 0 && (
+          <span>
+            <span className="t-meta block">Overtime</span>
+            <span className="tabular-nums">{overtime}h</span>
+          </span>
+        )}
+        {premium > 0 && (
+          <span>
+            <span className="t-meta block">Holiday / weekly-off</span>
+            <span className="tabular-nums">{premium}</span>
+          </span>
+        )}
+        {nights > 0 && (
+          <span>
+            <span className="t-meta block">Night shifts</span>
+            <span className="tabular-nums">{nights}</span>
+          </span>
+        )}
+        {site && (
+          <span>
+            <span className="t-meta block">Site</span>
+            <span>{site}</span>
+          </span>
+        )}
+        {shift && (
+          <span>
+            <span className="t-meta block">Shift</span>
+            <span>{shift}</span>
+          </span>
+        )}
+      </div>
+      {pending.length > 0 && (
+        /* These days exist but are not being paid, which is the single most
+           useful thing to say on a site worker's payslip. */
+        <p className="t-meta mt-2 text-[var(--caution)]">
+          {pending.length} {pending.length === 1 ? "day is" : "days are"} awaiting
+          approval and not included in this pay.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function PayrollLedger({
   employeeId,
   period,
@@ -126,6 +209,8 @@ export function PayrollLedger({
         </div>
       )}
       {error && <p className="mt-2 text-[0.8125rem] text-[var(--critical)]">{error}</p>}
+
+      <WorkFactSummary employeeId={employeeId} period={period} />
     </div>
   );
 }
