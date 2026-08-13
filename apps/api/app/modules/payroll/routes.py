@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.artifacts import service as artifacts
 from app.core.auth.provider import Principal
 from app.core.db import get_db
 from app.core.rbac import current_user, require
@@ -27,7 +28,7 @@ from app.modules.audit import service as audit
 from app.modules.compensation import service as compensation
 from app.modules.compensation.models import CompensationLine, CompensationVersion
 from app.modules.hr_core.models import Employee
-from app.modules.payroll import service
+from app.modules.payroll import render, service
 from app.modules.payroll.models import (
     PayComponent,
     PayrollRun,
@@ -391,6 +392,51 @@ def get_run(
     run_id: uuid.UUID, db: Session = Depends(get_db), _cid: str = Depends(resolve_tenant)
 ):
     return _detail(db, _run_or_404(db, run_id))
+
+
+@router.post("/runs/{run_id}/register", dependencies=CAN_WRITE)
+async def generate_register(
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(current_user),
+    cid: str = Depends(resolve_tenant),
+):
+    """Render this run's payroll register and keep it as an artifact.
+
+    Deliberately additive: generating again produces v2 rather than replacing
+    v1. A register attached to a finalized run is evidence, and evidence whose
+    bytes can change behind a link somebody already holds is not evidence.
+    """
+    run = _run_or_404(db, run_id)
+    payslips = db.scalars(
+        select(Payslip).where(Payslip.run_id == run.id, Payslip.deleted_at.is_(None))
+    ).all()
+    if not payslips:
+        raise HTTPException(422, "this run has no payslips to put in a register")
+
+    label = run.period.strftime("%b %Y")
+    artifact = await artifacts.generate(
+        db,
+        company_id=uuid.UUID(cid),
+        kind="payroll_register",
+        scope_key=f"run:{run.id}",
+        period=run.period,
+        run_id=run.id,
+        render=lambda: render.payroll_register(list(payslips), period_label=label),
+        filename=f"payroll-register-{run.period.strftime('%Y-%m')}.csv",
+        generated_by=uuid.UUID(principal.user_id),
+    )
+    audit.record(
+        db, company_id=uuid.UUID(cid), entity="artifact", entity_id=artifact.id,
+        action="generated",
+        payload={"kind": artifact.kind, "version": artifact.version,
+                 "checksum": artifact.checksum_sha256},
+    )
+    return {
+        "id": str(artifact.id), "kind": artifact.kind, "version": artifact.version,
+        "status": artifact.status, "filename": artifact.filename,
+        "size_bytes": artifact.size_bytes, "checksum_sha256": artifact.checksum_sha256,
+    }
 
 
 @router.patch(

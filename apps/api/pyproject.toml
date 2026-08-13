@@ -18,11 +18,17 @@ dependencies = [
     "pymupdf>=1.24",
     "google-genai>=1.0",
     "python-multipart>=0.0.9",
+    # S3-compatible object storage for payroll/compliance artifacts (ADR-0006
+    # as amended). Imported lazily so dev and CI never need credentials. The
+    # alternative — signing SigV4 by hand over httpx — is ~60 lines of
+    # crypto-adjacent code whose failures are silent and miserable to debug.
+    "boto3>=1.35",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
+    "pytest-asyncio>=0.24",  # BlobStore is async; its round-trip tests need no DB
     "ruff>=0.8",
     "mypy>=1.13",
 ]
@@ -59,3 +65,6 @@ warn_unused_ignores = true
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Explicit @pytest.mark.asyncio only — "auto" would try to run every async
+# helper in the suite as a test.
+asyncio_mode = "strict"

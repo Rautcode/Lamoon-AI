@@ -42,8 +42,20 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     ai_default_model: str = "gemini-2.5-flash"
 
-    # Storage (dev). ponytail: local FS now; DriveBlobStore/S3 behind BlobStore later.
+    # Storage. Backends are chosen PER PURPOSE (ADR-0006 as amended): payroll
+    # and compliance artifacts are statutory records with a retention
+    # obligation and go to S3-compatible object storage; ATS documents are
+    # collaborative and stay on Drive. Both default to local so a fresh
+    # checkout and CI need no configuration.
     storage_dir: str = "./_storage"
+    storage_backend_payroll: str = "local"  # local | s3
+    storage_backend_ats: str = "local"  # local | drive
+    s3_bucket: str = ""
+    #: Empty for AWS; set for MinIO/R2/Wasabi. This is what makes it
+    #: "S3-compatible" rather than "S3".
+    s3_endpoint_url: str = ""
+    s3_region: str = ""
+    s3_prefix: str = ""
 
     # Email. Empty smtp_host → log-only (dev). Set these to actually send.
     smtp_host: str = ""
