@@ -46,7 +46,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: apps/api
-        run: pip install . pytest ruff mypy
+        # Dev tools are named explicitly rather than installed from the `dev`
+        # dependency-group, so anything added there must be added here too.
+        # pytest-asyncio: the BlobStore round-trip tests are async.
+        run: pip install . pytest pytest-asyncio ruff mypy
 
       - name: Lint (ruff)
         working-directory: apps/api
