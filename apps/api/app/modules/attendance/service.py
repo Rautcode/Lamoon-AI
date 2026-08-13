@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.attendance.models import AttendanceEvent, AttendancePolicy
+from app.modules.hr_core.models import Employee
 from app.modules.leave.models import LeaveRequest, LeaveType
 from app.modules.work_calendar import service as work_calendar
 
@@ -174,10 +175,14 @@ def summaries_for(
         if start <= d <= end:
             by_day.setdefault(d, []).append(Punch(kind=r.kind, at=r.at))
 
-    # Annotate against the company work calendar so callers can tell a weekend
-    # or a public holiday apart from someone simply not showing up.
-    cal = work_calendar.get_calendar(db, policy.company_id)
-    holidays = work_calendar.holidays_between(db, start, end)
+    # Annotate against THIS EMPLOYEE'S calendar so callers can tell a weekend or
+    # a public holiday apart from someone simply not showing up — and so a
+    # holiday at one establishment is not an absence at another.
+    resolved = work_calendar.resolve_for(
+        db, company_id=policy.company_id,
+        establishment_id=_establishment_of(db, employee_id),
+        start=start, end=end,
+    )
 
     out: list[DaySummary] = []
     span = (end - start).days + 1
@@ -196,10 +201,8 @@ def summaries_for(
             if punches
             else DaySummary(day=d)
         )
-        summary.holiday = holidays.get(d)
-        summary.working_day = (
-            work_calendar.is_working_weekday(d, cal.working_days) and summary.holiday is None
-        )
+        summary.holiday = resolved.holidays.get(d)
+        summary.working_day = resolved.is_working_day(d)
         # Not working that day means not "short" — you weren't expected in.
         if not summary.working_day:
             summary.short = False
@@ -230,6 +233,26 @@ DAY_STATES = (
     "present", "absent", "weekly_off", "holiday", "paid_leave", "unpaid_leave",
     "half_day", "missing_punch", "work_from_home", "on_duty",
 )
+
+
+def _establishment_of(db: Session, employee_id: uuid.UUID) -> uuid.UUID | None:
+    """One employee's establishment, for calendar resolution.
+
+    A read of hr_core, which attendance already depends on. Batched callers use
+    `_establishments_of` instead — this one is for the single-employee path.
+    """
+    return db.scalar(select(Employee.establishment_id).where(Employee.id == employee_id))
+
+
+def _establishments_of(
+    db: Session, employee_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID | None]:
+    if not employee_ids:
+        return {}
+    rows = db.execute(
+        select(Employee.id, Employee.establishment_id).where(Employee.id.in_(employee_ids))
+    ).all()
+    return {employee_id: est for employee_id, est in rows}
 
 
 def leave_on(
@@ -293,9 +316,14 @@ def states_for_today(
         if local_date(e.at, tz) == today:
             punches.setdefault(e.employee_id, []).append(Punch(kind=e.kind, at=e.at))
 
-    holiday = work_calendar.holidays_between(db, today, today).get(today)
-    cal = work_calendar.get_calendar(db, policy.company_id)
-    working = work_calendar.is_working_weekday(today, cal.working_days) and holiday is None
+    # Calendars per employee, not one for the company: today can be a holiday
+    # at one establishment and an ordinary working day at another. Resolved in
+    # bulk so the presence page does not cost a query per person.
+    calendars = work_calendar.resolve_many(
+        db, company_id=policy.company_id,
+        establishment_ids=_establishments_of(db, employee_ids),
+        start=today, end=today,
+    )
     leave = leave_on(db, today, employee_ids)
 
     out: dict[uuid.UUID, tuple[DaySummary, str]] = {}
@@ -312,7 +340,9 @@ def states_for_today(
             if mine
             else DaySummary(day=today)
         )
-        summary.holiday = holiday
+        resolved = calendars[employee_id]
+        summary.holiday = resolved.holidays.get(today)
+        working = resolved.is_working_day(today)
         summary.working_day = working
         if not working:
             summary.short = summary.late = False

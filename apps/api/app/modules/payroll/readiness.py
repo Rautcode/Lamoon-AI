@@ -128,8 +128,10 @@ def evaluate(db: Session, *, company_id: uuid.UUID, period: date) -> dict:
         )
     )
 
+    # Company-scope on purpose: this is a company-wide readiness view, not
+    # anybody's pay. Per-establishment differences surface in validation.
     _, _, working_days = service.calendar_context(db, company_id, period)
-    cal = work_calendar.get_calendar(db, company_id)
+    cal = work_calendar.default_calendar(db, company_id)
     checks.append(
         Check(
             "work_calendar", "Working calendar",

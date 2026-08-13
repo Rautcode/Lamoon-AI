@@ -58,22 +58,35 @@ def month_bounds(period: date) -> tuple[date, date]:
 
 
 def calendar_context(
-    db: Session, company_id: uuid.UUID, period: date
+    db: Session,
+    company_id: uuid.UUID,
+    period: date,
+    *,
+    establishment_id: uuid.UUID | None = None,
 ) -> tuple[str, set[date], int]:
-    """The work-week pattern, the month's holidays, and its working-day count.
+    """The work-week pattern, the month's holidays, and its working-day count —
+    **for one employee's establishment**.
 
     ONE implementation, because several things divide by that count: leave
     proration, mid-month joiner proration, and the overtime hourly rate. A
     second copy would price overtime differently depending on which code path
     reached it, which is the kind of bug nobody finds until an employee does.
+
+    `establishment_id` is what makes it correct rather than merely consistent.
+    Omitting it resolves the company calendar, which is right for a
+    company-wide view (readiness) and **wrong for anybody's pay** — the
+    denominator differs per site, so a Mumbai employee's unpaid day is not
+    worth the same as a Bengaluru one's.
     """
     start, end = month_bounds(period)
-    cal = work_calendar.get_calendar(db, company_id)
-    holidays = set(work_calendar.holidays_between(db, start, end))
+    resolved = work_calendar.resolve_for(
+        db, company_id=company_id, establishment_id=establishment_id,
+        start=start, end=end,
+    )
     return (
-        cal.working_days,
-        holidays,
-        work_calendar.count_working_days(start, end, cal.working_days, holidays),
+        resolved.working_days,
+        set(resolved.holidays),
+        resolved.working_days_between(start, end),
     )
 
 
@@ -131,12 +144,17 @@ def unpaid_leave_days(db: Session, employee_id: uuid.UUID, start: date, end: dat
     if not requests:
         return 0
 
-    cal = work_calendar.get_calendar(db, requests[0].company_id)
-    holidays = set(work_calendar.holidays_between(db, start, end))
+    # The employee's OWN calendar, not the company's: a day that is a holiday
+    # at their site is not an unpaid day for them.
+    establishment_id = db.scalar(
+        select(Employee.establishment_id).where(Employee.id == employee_id)
+    )
+    resolved = work_calendar.resolve_for(
+        db, company_id=requests[0].company_id, establishment_id=establishment_id,
+        start=start, end=end,
+    )
     return sum(
-        work_calendar.count_working_days(
-            max(r.start_date, start), min(r.end_date, end), cal.working_days, holidays
-        )
+        resolved.working_days_between(max(r.start_date, start), min(r.end_date, end))
         for r in requests
     )
 
@@ -195,7 +213,9 @@ def pre_joining_days(db: Session, company_id: uuid.UUID, employee: Employee, per
     if employee.joined_on <= start:
         return 0
 
-    pattern, holidays, working_days = calendar_context(db, company_id, period)
+    pattern, holidays, working_days = calendar_context(
+        db, company_id, period, establishment_id=employee.establishment_id
+    )
     if employee.joined_on > end:
         return working_days  # not on the payroll for any of this month
     payable = work_calendar.count_working_days(employee.joined_on, end, pattern, holidays)
@@ -252,7 +272,9 @@ def compute_payslip(
     back in produces the same result. Use `lop_for()` to obtain the value.
     """
     start, _ = month_bounds(period)
-    _, _, working_days = calendar_context(db, company_id, period)
+    _, _, working_days = calendar_context(
+        db, company_id, period, establishment_id=employee.establishment_id
+    )
     lop_days = max(0, min(lop_days, working_days))
     paid_days = working_days - lop_days
     # A zero-working-day month (every day a declared holiday) would otherwise

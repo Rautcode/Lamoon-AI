@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.modules.audit import service as audit
+from app.modules.hr_core.models import Employee
 from app.modules.leave.models import LeaveRequest, LeaveType
 from app.modules.leave.schemas import LeaveBalanceOut
 from app.modules.work_calendar import service as work_calendar
@@ -86,7 +87,12 @@ def create_request(
     # Billed in WORKING days. Counting calendar days (what this did before)
     # charged 4 days for a Friday-to-Monday absence — real balance taken off
     # people for days they were never going to work.
-    days, holidays = work_calendar.billable_days(db, company_id, start_date, end_date)
+    establishment_id = db.scalar(
+        select(Employee.establishment_id).where(Employee.id == employee_id)
+    )
+    days, holidays = work_calendar.billable_days(
+        db, company_id, start_date, end_date, establishment_id=establishment_id
+    )
     if days == 0:
         raise NoWorkingDays("that range contains no working days")
 

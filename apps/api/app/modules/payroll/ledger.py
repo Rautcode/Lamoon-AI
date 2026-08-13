@@ -130,11 +130,13 @@ def seed_from_structure(
         return []
 
     start, end = month_bounds(period)
-    calendar = work_calendar.get_calendar(db, company_id)
-    holidays = set(work_calendar.holidays_between(db, start, end))
-    period_working_days = work_calendar.count_working_days(
-        start, end, calendar.working_days, holidays
+    # THIS employee's calendar. Working days are the denominator of every
+    # prorated amount below, and it differs by establishment.
+    resolved = work_calendar.resolve_for(
+        db, company_id=company_id, establishment_id=employee.establishment_id,
+        start=start, end=end,
     )
+    period_working_days = resolved.working_days_between(start, end)
 
     lines_by_version = compensation.lines_for(db, [s.version_id for s in segments])
     components = {
@@ -148,9 +150,7 @@ def seed_from_structure(
     totals: dict[uuid.UUID, Decimal] = {}
     notes: list[str] = []
     for segment in segments:
-        segment_days = work_calendar.count_working_days(
-            segment.start, segment.end, calendar.working_days, holidays
-        )
+        segment_days = resolved.working_days_between(segment.start, segment.end)
         if len(segments) > 1:
             # %-d is POSIX-only; build the day number by hand so this reads the
             # same on Windows.
