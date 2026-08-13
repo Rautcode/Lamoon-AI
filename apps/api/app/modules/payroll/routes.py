@@ -12,7 +12,7 @@ tighter than anywhere else in the product:
   a support ticket at best.
 """
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +24,8 @@ from app.core.db import get_db
 from app.core.rbac import current_user, require
 from app.core.tenant import resolve_tenant
 from app.modules.audit import service as audit
+from app.modules.compensation import service as compensation
+from app.modules.compensation.models import CompensationLine, CompensationVersion
 from app.modules.hr_core.models import Employee
 from app.modules.payroll import service
 from app.modules.payroll.models import (
@@ -31,7 +33,6 @@ from app.modules.payroll.models import (
     PayrollRun,
     Payslip,
     ProfessionalTaxSlab,
-    SalaryComponent,
 )
 from app.modules.payroll.schemas import (
     PayComponentIn,
@@ -177,21 +178,34 @@ def replace_pt_slabs(
 # --- salary structures ------------------------------------------------------
 
 
-def _structure(db: Session, employee_id: uuid.UUID) -> SalaryStructureOut:
-    rows = db.execute(
-        select(SalaryComponent, PayComponent)
-        .join(PayComponent, PayComponent.id == SalaryComponent.component_id)
-        .where(
-            SalaryComponent.employee_id == employee_id,
-            SalaryComponent.deleted_at.is_(None),
-            PayComponent.deleted_at.is_(None),
-        )
-    ).all()
+def _structure(
+    db: Session, employee_id: uuid.UUID, *, on: date | None = None
+) -> SalaryStructureOut:
+    """The salary in force on a date — today unless asked otherwise.
+
+    Reads the compensation timeline, not a live "current salary" row, because
+    there no longer is one. Payroll itself does NOT come through here: it
+    resolves by period in `ledger.seed_from_structure`, and "today" is not a
+    payroll period.
+    """
+    version = compensation.current_version(db, employee_id=employee_id, on=on)
+    if version is None:
+        return SalaryStructureOut(employee_id=employee_id, components=[], monthly_gross=0)
+
+    catalogue = {
+        c.id: c
+        for c in db.scalars(select(PayComponent).where(PayComponent.deleted_at.is_(None))).all()
+    }
+    pairs = [
+        (line, catalogue[line.component_id])
+        for line in compensation.lines_for(db, [version.id]).get(version.id, [])
+        if line.component_id in catalogue
+    ]
     components = [
         SalaryComponentOut(
-            component_id=c.id, code=c.code, name=c.name, kind=c.kind, amount=s.amount
+            component_id=c.id, code=c.code, name=c.name, kind=c.kind, amount=line.amount
         )
-        for s, c in sorted(rows, key=lambda r: (r[1].sequence, r[1].name))
+        for line, c in sorted(pairs, key=lambda r: (r[1].sequence, r[1].name))
     ]
     return SalaryStructureOut(
         employee_id=employee_id,
@@ -233,28 +247,76 @@ def set_salary(
     if unknown:
         raise HTTPException(422, f"unknown pay components: {', '.join(unknown)}")
 
-    now = datetime.now(UTC)
-    for old in db.scalars(
-        select(SalaryComponent).where(
-            SalaryComponent.employee_id == employee_id, SalaryComponent.deleted_at.is_(None)
-        )
-    ).all():
-        old.deleted_at = now
-    db.add_all(
-        SalaryComponent(
-            company_id=company_id, employee_id=employee_id,
-            component_id=c.component_id, amount=c.amount,
-        )
-        for c in body.components
+    # A compatibility shim over the compensation timeline. Salary is no longer
+    # a value that can be overwritten, so this creates a VERSION.
+    #
+    # The effective date is the whole difficulty, because this endpoint does
+    # not carry one. Two cases, and both defaults are chosen to avoid paying
+    # somebody the wrong amount by accident:
+    #
+    #   FIRST salary — from their joining date, or EPOCH if that is unknown.
+    #     There is no earlier version to conflict with, and dating it "today"
+    #     would make every past period resolve to no salary at all and pay zero.
+    #
+    #   A CHANGE — from the 1st of the current month. An undated salary edit
+    #     means "this is the pay for the period being worked on", not "prorate
+    #     the month from the moment I clicked save". Anyone who genuinely means
+    #     a mid-month change posts to /compensation/.../versions with the date,
+    #     and gets proration.
+    existing = compensation.current_version(db, employee_id=employee_id)
+    effective_from = (
+        date.today().replace(day=1)
+        if existing
+        else (employee.joined_on or compensation.EPOCH)
     )
-    db.flush()
+
+    try:
+        version = compensation.create_version(
+            db, company_id=company_id, employee_id=employee_id,
+            effective_from=effective_from,
+            lines=[(c.component_id, c.amount) for c in body.components],
+            reason="hire" if existing is None else "revision",
+        )
+    except compensation.OverlappingVersion:
+        # A version already starts on that date — i.e. the salary was already
+        # changed this month. Replace ITS lines rather than refusing or
+        # stacking a second version on the same day: correcting a figure
+        # entered an hour ago is not a pay revision, and this endpoint has no
+        # way for the caller to say which it meant.
+        clash = db.scalar(
+            select(CompensationVersion).where(
+                CompensationVersion.employee_id == employee_id,
+                CompensationVersion.effective_from == effective_from,
+                CompensationVersion.deleted_at.is_(None),
+            )
+        )
+        if clash is None:  # pragma: no cover — the exception guarantees one
+            raise HTTPException(409, "conflicting compensation version") from None
+        version = clash
+        now = datetime.now(UTC)
+        for line in compensation.lines_for(db, [version.id]).get(version.id, []):
+            line.deleted_at = now
+        for c in body.components:
+            db.add(
+                CompensationLine(
+                    company_id=company_id, version_id=version.id,
+                    component_id=c.component_id, amount=c.amount,
+                )
+            )
+        db.flush()
+
     structure = _structure(db, employee_id)
     # The amounts stay out of the audit payload: the audit log is readable by
     # more people than the salary is, and "who changed it, when" is the part
     # that needs to be tamper-evident.
     audit.record(
         db, company_id=company_id, entity="salary_structure", entity_id=employee_id,
-        action="updated", payload={"component_count": len(body.components)},
+        action="updated",
+        payload={
+            "component_count": len(body.components),
+            "effective_from": effective_from.isoformat(),
+            "version_id": str(version.id),
+        },
     )
     return structure
 

@@ -20,10 +20,12 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.modules.compensation import service as compensation
 from app.modules.hr_core.models import Employee
 from app.modules.payroll import rules, statutory
-from app.modules.payroll.models import PayComponent, SalaryComponent
+from app.modules.payroll.models import PayComponent
 from app.modules.payroll.workforce import PayrollInput, WorkFact
+from app.modules.work_calendar import service as work_calendar
 
 ZERO = Decimal("0")
 
@@ -105,27 +107,72 @@ def _replace(db: Session, employee_id: uuid.UUID, period: date, source: str) -> 
 def seed_from_structure(
     db: Session, *, company_id: uuid.UUID, employee: Employee, period: date
 ) -> list[PayrollInput]:
-    """Turn the employee's salary structure into this period's inputs.
+    """Turn the compensation effective for this PERIOD into the period's inputs.
 
-    The structure is a template. Once written into the ledger the figures
-    belong to the period, so a raise on the 20th changes next month without
-    silently rewriting this one.
+    Resolved by period, never by "now". Re-running August next year must use
+    the salary that applied in August, not whatever is current when the button
+    is pressed.
+
+    A mid-period revision produces two segments, and each component's amount is
+    the sum of its prorated slices — ₹41,000 for the first ten working days
+    plus ₹45,000 for the remaining twelve, not whichever version happened to be
+    latest. The split is recorded in `reason` so the payslip can explain the
+    number, and the amount stays ONE ledger row per component so the existing
+    (employee, period, code, source) uniqueness still holds.
     """
     period = period.replace(day=1)
     _replace(db, employee.id, period, "structure")
 
-    rows = db.execute(
-        select(SalaryComponent, PayComponent)
-        .join(PayComponent, PayComponent.id == SalaryComponent.component_id)
-        .where(
-            SalaryComponent.employee_id == employee.id,
-            SalaryComponent.deleted_at.is_(None),
-            PayComponent.deleted_at.is_(None),
+    segments = compensation.versions_for_period(
+        db, employee_id=employee.id, period=period
+    )
+    if not segments:
+        return []
+
+    start, end = month_bounds(period)
+    calendar = work_calendar.get_calendar(db, company_id)
+    holidays = set(work_calendar.holidays_between(db, start, end))
+    period_working_days = work_calendar.count_working_days(
+        start, end, calendar.working_days, holidays
+    )
+
+    lines_by_version = compensation.lines_for(db, [s.version_id for s in segments])
+    components = {
+        c.id: c
+        for c in db.scalars(
+            select(PayComponent).where(PayComponent.deleted_at.is_(None))
+        ).all()
+    }
+
+    #: component_id -> summed prorated amount, and the words explaining it.
+    totals: dict[uuid.UUID, Decimal] = {}
+    notes: list[str] = []
+    for segment in segments:
+        segment_days = work_calendar.count_working_days(
+            segment.start, segment.end, calendar.working_days, holidays
         )
-    ).all()
+        if len(segments) > 1:
+            # %-d is POSIX-only; build the day number by hand so this reads the
+            # same on Windows.
+            notes.append(
+                f"{segment.start.day} {segment.start.strftime('%b')}"
+                f"–{segment.end.day} {segment.end.strftime('%b')} ({segment_days}d)"
+            )
+        for line in lines_by_version.get(segment.version_id, []):
+            share = compensation.prorate(
+                line.amount,
+                segment_working_days=segment_days,
+                period_working_days=period_working_days,
+            )
+            totals[line.component_id] = totals.get(line.component_id, ZERO) + share
+
+    reason = f"compensation changed mid-period: {', '.join(notes)}" if notes else None
 
     created: list[PayrollInput] = []
-    for salary, component in rows:
+    for component_id, amount in totals.items():
+        component = components.get(component_id)
+        if component is None:  # component deleted since the version was written
+            continue
         row = PayrollInput(
             company_id=company_id,
             employee_id=employee.id,
@@ -133,10 +180,11 @@ def seed_from_structure(
             kind="deduction" if component.kind == "deduction" else "earning",
             code=component.code,
             name=component.name,
-            amount=statutory.money(salary.amount),
+            amount=statutory.money(amount),
             wage_basis=component.wage_basis,
             source="structure",
             sequence=component.sequence,
+            reason=reason,
         )
         db.add(row)
         created.append(row)

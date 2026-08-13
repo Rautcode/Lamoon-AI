@@ -30,6 +30,7 @@ import type {
   Reconciliation,
   WorkFact,
   PTSlab,
+  CompensationVersion,
   SalaryStructure,
   Presence,
   WorkWeek,
@@ -329,6 +330,23 @@ export const api = {
       }),
     employeePayslips: (employeeId: string) =>
       request<Payslip[]>(`/payroll/employees/${employeeId}/payslips`),
+  },
+  compensation: {
+    versions: (employeeId: string) =>
+      request<CompensationVersion[]>(`/compensation/employees/${employeeId}/versions`),
+    addVersion: (
+      employeeId: string,
+      body: {
+        effective_from: string;
+        reason: string;
+        note?: string;
+        lines: { component_id: string; amount: string }[];
+      }
+    ) =>
+      request<CompensationVersion>(`/compensation/employees/${employeeId}/versions`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
   },
   jobs: {
     list: () => request<Job[]>("/ats/jobs"),

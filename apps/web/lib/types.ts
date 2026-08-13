@@ -295,6 +295,20 @@ export type SalaryStructure = {
   monthly_gross: string;
 };
 
+/** One salary, and the span of time it is true for. `effective_to` null means
+ *  open-ended — the current salary. Payroll resolves these by PERIOD, so a
+ *  raise dated next month does not change this month's pay. */
+export type CompensationVersion = {
+  id: string;
+  employee_id: string;
+  effective_from: string;
+  effective_to: string | null;
+  reason: string;
+  note: string | null;
+  gross: string;
+  lines: { component_id: string; code: string; name: string; amount: string }[];
+};
+
 /** One thing wrong, or one thing worth a second look. `impact` is money at
  *  stake where it can be estimated — null means "not quantifiable", which is
  *  different from zero. */
