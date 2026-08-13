@@ -42,7 +42,15 @@ class PresenceOut(BaseModel):
 
     employee_id: uuid.UUID
     full_name: str
-    status: str  # in | out | absent
+    #: Is this person at work right now. in | out | absent
+    status: str
+    #: What this DAY is — service.DAY_STATES. A different question from
+    #: `status`: somebody on approved leave is not "absent", they are accounted
+    #: for, and payroll must never treat the two the same.
+    state: str = "absent"
+    #: Name of the holiday, when `state` is holiday. Worth showing: "Diwali"
+    #: explains an empty office in a way "holiday" alone does not.
+    holiday: str | None = None
     first_in: datetime | None = None
     last_out: datetime | None = None
     worked_minutes: int = 0

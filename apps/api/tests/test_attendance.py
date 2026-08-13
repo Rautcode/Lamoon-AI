@@ -301,4 +301,47 @@ def test_employee_cannot_punch_for_someone_else(client, org):
 def test_my_attendance_is_only_mine(client, org):
     client.post("/api/v1/me/attendance/punch", json={"kind": "in"}, headers=org["emp"])
     mine = client.get("/api/v1/me/attendance", headers=org["emp"]).json()
-    assert len(mine) == 1 and mine[0]["open"] is True
+    # The range comes back in full — empty days included, so a weekend is
+    # distinguishable from a no-show — but exactly ONE day has my punch on it
+    # and nobody else's ever appears (the route takes no employee id).
+    punched = [d for d in mine if d["first_in"] is not None]
+    assert len(punched) == 1 and punched[0]["open"] is True
+
+
+# --- calendar-aware empty days ----------------------------------------------
+#
+# The defect: summaries_for returned only days that HAD punches, so working_day
+# and holiday were attached to exactly the days nobody needed them for. Every
+# empty cell looked identical whether it was a Sunday, Diwali, or a no-show —
+# and payroll cannot derive loss of pay from data that can't tell those apart.
+
+
+@endpoint
+def test_range_includes_days_with_no_punches(client, org):
+    got = client.get(
+        f"/api/v1/attendance/{org['employee']['id']}?days=14", headers=org["hr"]
+    ).json()
+    assert len(got) == 14, "every day in the window must come back, punched or not"
+
+
+@endpoint
+def test_weekend_is_marked_non_working_without_any_punch(client, org):
+    got = client.get(
+        f"/api/v1/attendance/{org['employee']['id']}?days=14", headers=org["hr"]
+    ).json()
+    # Any 14-day window contains a weekend, and nobody punched at all here.
+    non_working = [d for d in got if not d["working_day"]]
+    assert non_working, "a fortnight with no working_day=False means the calendar is ignored"
+    assert all(d["first_in"] is None for d in non_working)
+
+
+@endpoint
+def test_presence_reports_day_state_not_just_absent(client, org):
+    rows = client.get("/api/v1/attendance/today", headers=org["hr"]).json()
+    assert rows, "the presence view lists everyone active"
+    for row in rows:
+        assert "state" in row, "presence must answer what the DAY is, not only in/out"
+        assert row["state"] in (
+            "present", "absent", "weekly_off", "holiday", "paid_leave",
+            "unpaid_leave", "half_day", "missing_punch", "work_from_home", "on_duty",
+        )

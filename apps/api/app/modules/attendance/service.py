@@ -10,6 +10,7 @@ by UTC would file a 2am IST punch under the previous day, which is a silent
 data-corruption bug for night shifts in the target market.
 """
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -18,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.attendance.models import AttendanceEvent, AttendancePolicy
+from app.modules.leave.models import LeaveRequest, LeaveType
 from app.modules.work_calendar import service as work_calendar
 
 
@@ -142,9 +144,13 @@ def summaries_for(
 ) -> list[DaySummary]:
     """Day summaries for one employee across an inclusive local-date range.
 
-    Days with no punches are omitted; each returned day carries `working_day`
-    and `holiday` from the company work calendar, so a caller can tell a
-    Sunday or Diwali apart from someone who simply didn't show up."""
+    **Every day in the range is returned**, including days with no punches at
+    all, each carrying `working_day` and `holiday` from the company work
+    calendar. That is the whole point: an empty day is not one thing. A Sunday,
+    a public holiday and a genuine no-show are three different facts, and the
+    caller can only tell them apart if the empty days are present to be
+    annotated. Returning only punched days annotated the days that never needed
+    it and omitted the ones that did."""
     tz = tz_of(policy)
     # Widen the UTC window by a day either side: a local day can start before
     # and end after its UTC namesake.
@@ -174,15 +180,21 @@ def summaries_for(
     holidays = work_calendar.holidays_between(db, start, end)
 
     out: list[DaySummary] = []
-    for d in sorted(by_day):
-        summary = pair_events(
-            by_day[d],
-            day=d,
-            tz=tz,
-            workday_start=policy.workday_start,
-            expected_minutes=policy.expected_minutes,
-            grace_minutes=policy.grace_minutes,
-            now=now,
+    span = (end - start).days + 1
+    for d in (start + timedelta(days=i) for i in range(span)):
+        punches = by_day.get(d)
+        summary = (
+            pair_events(
+                punches,
+                day=d,
+                tz=tz,
+                workday_start=policy.workday_start,
+                expected_minutes=policy.expected_minutes,
+                grace_minutes=policy.grace_minutes,
+                now=now,
+            )
+            if punches
+            else DaySummary(day=d)
         )
         summary.holiday = holidays.get(d)
         summary.working_day = (
@@ -201,5 +213,140 @@ def today_for(
 ) -> DaySummary:
     tz = tz_of(policy)
     today = local_date(now or datetime.now(UTC), tz)
-    days = summaries_for(db, employee_id, policy, today, today, now=now)
-    return days[0] if days else DaySummary(day=today)
+    # summaries_for now returns every day in the range, so a day with no
+    # punches still arrives annotated against the calendar.
+    return summaries_for(db, employee_id, policy, today, today, now=now)[0]
+
+
+# One vocabulary for "what happened on this day", used by presence, the
+# heatmap, and (next) the payroll bridge that turns days into work facts.
+#
+# `absent` and `missing_punch` are deliberately different: a missing punch means
+# somebody worked and the record is incomplete, absence means they were not
+# there. Only one of those is a candidate for loss of pay, and treating them as
+# the same is how a payroll system quietly underpays people for a failed
+# biometric reader.
+DAY_STATES = (
+    "present", "absent", "weekly_off", "holiday", "paid_leave", "unpaid_leave",
+    "half_day", "missing_punch", "work_from_home", "on_duty",
+)
+
+
+def leave_on(
+    db: Session, day: date, employee_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """Approved leave covering `day`, as paid_leave/unpaid_leave, in ONE query.
+
+    Batched deliberately: presence asks this for every employee at once, and a
+    per-employee lookup here would put a query per person on a page that
+    already renders the whole company.
+    """
+    if not employee_ids:
+        return {}
+    rows = db.execute(
+        select(LeaveRequest.employee_id, LeaveType.paid)
+        .join(LeaveType, LeaveType.id == LeaveRequest.leave_type_id)
+        .where(
+            LeaveRequest.employee_id.in_(employee_ids),
+            LeaveRequest.status == "approved",
+            LeaveRequest.start_date <= day,
+            LeaveRequest.end_date >= day,
+            LeaveRequest.deleted_at.is_(None),
+            LeaveType.deleted_at.is_(None),
+        )
+    ).all()
+    return {employee_id: "paid_leave" if paid else "unpaid_leave" for employee_id, paid in rows}
+
+
+def states_for_today(
+    db: Session,
+    *,
+    employee_ids: Sequence[uuid.UUID],
+    policy: AttendancePolicy,
+    now: datetime | None = None,
+) -> dict[uuid.UUID, tuple[DaySummary, str]]:
+    """Every employee's day summary and day state for today.
+
+    Four queries total regardless of headcount — punches, calendar, holidays,
+    leave. The obvious version calls today_for() in a loop, which is three
+    queries per person and makes the presence page cost more the more people a
+    company has.
+    """
+    tz = tz_of(policy)
+    today = local_date(now or datetime.now(UTC), tz)
+    if not employee_ids:
+        return {}
+
+    lo = datetime.combine(today, time.min, tzinfo=tz) - timedelta(days=1)
+    hi = datetime.combine(today, time.max, tzinfo=tz) + timedelta(days=1)
+    events = db.scalars(
+        select(AttendanceEvent).where(
+            AttendanceEvent.employee_id.in_(employee_ids),
+            AttendanceEvent.at >= lo,
+            AttendanceEvent.at <= hi,
+            AttendanceEvent.deleted_at.is_(None),
+        ).order_by(AttendanceEvent.at)
+    ).all()
+
+    punches: dict[uuid.UUID, list[Punch]] = {}
+    for e in events:
+        if local_date(e.at, tz) == today:
+            punches.setdefault(e.employee_id, []).append(Punch(kind=e.kind, at=e.at))
+
+    holiday = work_calendar.holidays_between(db, today, today).get(today)
+    cal = work_calendar.get_calendar(db, policy.company_id)
+    working = work_calendar.is_working_weekday(today, cal.working_days) and holiday is None
+    leave = leave_on(db, today, employee_ids)
+
+    out: dict[uuid.UUID, tuple[DaySummary, str]] = {}
+    for employee_id in employee_ids:
+        mine = punches.get(employee_id)
+        summary = (
+            pair_events(
+                mine, day=today, tz=tz,
+                workday_start=policy.workday_start,
+                expected_minutes=policy.expected_minutes,
+                grace_minutes=policy.grace_minutes,
+                now=now,
+            )
+            if mine
+            else DaySummary(day=today)
+        )
+        summary.holiday = holiday
+        summary.working_day = working
+        if not working:
+            summary.short = summary.late = False
+        out[employee_id] = (
+            summary,
+            day_state(summary, leave=leave.get(employee_id), today=today),
+        )
+    return out
+
+
+def day_state(summary: DaySummary, *, leave: str | None = None, today: date | None = None) -> str:
+    """What this day was, in one word.
+
+    Order matters. A holiday is a holiday whether or not somebody punched in;
+    approved leave outranks an empty day because the absence is already
+    explained; punches outrank leave because a punch is evidence and a leave
+    record is an intention somebody may have changed.
+
+    `today` decides whether an unpaired punch-in is somebody still at their
+    desk or somebody who forgot to tap out. pair_events cannot know that — it
+    is pure and has no clock — so the judgement lives here, where the caller
+    knows which day it is looking at.
+    """
+    if summary.holiday is not None:
+        return "holiday"
+    if not summary.working_day:
+        return "weekly_off"
+    if summary.first_in is not None:
+        if summary.open and (today is None or summary.day < today):
+            # The day is over and the punch never closed. Somebody worked and
+            # the record is incomplete — which is NOT absence, and must never
+            # cost them a day's pay.
+            return "missing_punch"
+        return "present"
+    if leave is not None:
+        return leave
+    return "absent"

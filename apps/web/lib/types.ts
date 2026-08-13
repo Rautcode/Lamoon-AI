@@ -113,12 +113,33 @@ export type DaySummary = {
   late: boolean;
   short: boolean;
   anomalies: string[];
+  /** False for weekends and holidays. Every day in the range comes back now,
+   *  so an empty cell can be told apart from a day off. */
+  working_day: boolean;
+  holiday: string | null;
 };
+
+/** What happened on a day. `absent` is the only one that is a problem — the
+ *  rest are explanations, and payroll must never treat them alike. */
+export type DayState =
+  | "present"
+  | "absent"
+  | "weekly_off"
+  | "holiday"
+  | "paid_leave"
+  | "unpaid_leave"
+  | "half_day"
+  | "missing_punch"
+  | "work_from_home"
+  | "on_duty";
 
 export type Presence = {
   employee_id: string;
   full_name: string;
+  /** At work this minute. A different question from `state`. */
   status: "in" | "out" | "absent";
+  state: DayState;
+  holiday: string | null;
   first_in: string | null;
   last_out: string | null;
   worked_minutes: number;

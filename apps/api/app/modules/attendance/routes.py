@@ -53,20 +53,34 @@ def update_policy(
 
 @router.get("/today", response_model=list[PresenceOut], dependencies=CAN_READ)
 def presence_today(db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)):
-    """Who's in right now. Everyone active is listed — people with no punches
-    show as `absent`, which is the question this view exists to answer."""
+    """Who's in right now, and why anybody isn't.
+
+    `state` is the full day vocabulary, not just in/out/absent: on a Sunday
+    everyone reads `weekly_off`, and somebody on approved leave reads
+    `paid_leave`. Reporting all three as "absent" is what made this page tell
+    an HR team that their whole company failed to show up on a holiday.
+
+    `status` is kept as in|out|absent for the presence dot — it answers "is
+    this person at work this minute", which is a different question.
+    """
     policy = service.get_policy(db, uuid.UUID(cid))
     employees = db.scalars(
-        select(Employee).where(Employee.deleted_at.is_(None), Employee.status != "exited")
+        select(Employee)
+        .where(Employee.deleted_at.is_(None), Employee.status != "exited")
+        .order_by(Employee.full_name)
     ).all()
 
+    states = service.states_for_today(
+        db, employee_ids=[e.id for e in employees], policy=policy
+    )
     out = []
     for e in employees:
-        day = service.today_for(db, e.id, policy)
-        status = "in" if day.open else ("out" if day.first_in else "absent")
+        day, state = states[e.id]
         out.append(
             PresenceOut(
-                employee_id=e.id, full_name=e.full_name, status=status,
+                employee_id=e.id, full_name=e.full_name,
+                status="in" if day.open else ("out" if day.first_in else "absent"),
+                state=state, holiday=day.holiday,
                 first_in=day.first_in, last_out=day.last_out,
                 worked_minutes=day.worked_minutes, late=day.late,
             )
