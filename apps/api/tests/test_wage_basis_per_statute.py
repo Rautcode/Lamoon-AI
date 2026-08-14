@@ -158,3 +158,23 @@ def test_the_default_catalogue_still_matches_the_old_behaviour():
     new_way = rules.basis_for(lines(), statute="epf", jurisdiction=None, period=period)
     assert old_way.statutory_wage == new_way.statutory_wage
     assert old_way.added_back == new_way.added_back
+
+
+# --- provenance ---------------------------------------------------------------
+
+
+def test_every_rule_cites_the_instrument_it_came_from():
+    """"Because the code said so" is not an answer when a CA asks why a payslip
+    used a particular basis. The citation is what lets them check us rather
+    than trust us."""
+    families = (
+        rules.WAGE_DEFINITIONS,
+        rules.EPF_RULES,
+        rules.ESI_RULES,
+    )
+    for family in families:
+        for rule in family:
+            assert rule.source_note, f"{rule.version} cites nothing"
+            assert len(rule.source_note) > 40, (
+                f"{rule.version}: a citation should name the instrument, not gesture at it"
+            )

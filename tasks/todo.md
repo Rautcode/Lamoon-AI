@@ -174,7 +174,10 @@ line is demonstrated on a real tenant, not asserted from the code.
 - [ ] **B5 Multi-entity and establishment depth** · M · deps: B2
 
 - [ ] **D-Phase 1** — see [`plan-payroll.md`](plan-payroll.md)
-  - [ ] 1.1 wage basis per statute · 1.2 rules-as-data · 1.3 PayrollContext
+  - [x] 1.1 wage basis per statute and jurisdiction
+  - [~] 1.2 rules-as-data — **withdrawn**, premise was wrong (a migration IS
+        a deploy here); `source_note` citations shipped instead
+  - [ ] 1.3 PayrollContext
   - [ ] 1.4 proration policy *(now deps: C1)* · 1.5 bulk persist
   - [ ] 1.6 attendance bridge with **owned** exceptions · 1.7 async · 1.8 approval
 

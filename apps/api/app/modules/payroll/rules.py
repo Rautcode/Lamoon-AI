@@ -67,6 +67,10 @@ class WageDefinition:
     statute: str | None = None
     #: None = central. A state code ("MH") overrides the centre for that state.
     jurisdiction: str | None = None
+    #: The instrument this came from. Not decoration: when somebody asks why a
+    #: payslip used a particular basis, "because the code said so" is not an
+    #: answer, and the citation is what lets a CA check us rather than trust us.
+    source_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,7 @@ class EpfRule:
     #: above the ceiling. Their whole employer share goes to EPF instead.
     eps_new_member_cutoff: date
     eps_max_age: int
+    source_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,7 @@ class EsiRule:
     effective_from: date
     employee_rate: Decimal
     employer_rate: Decimal
+    source_note: str = ""
 
 
 WAGE_DEFINITIONS: list[WageDefinition] = [
@@ -107,11 +113,23 @@ WAGE_DEFINITIONS: list[WageDefinition] = [
         version="wages-nominated-components",
         effective_from=date(1952, 1, 1),
         excluded_share_cap=None,
+        source_note=(
+            "Pre-Code practice: PF on the components the employer nominated "
+            "(broadly basic + DA), per EPF & MP Act 1952 s.2(b) as applied "
+            "before the Code on Wages commenced."
+        ),
     ),
     WageDefinition(
         version="wages-code-on-wages-2025-11",
         effective_from=LABOUR_CODE_START,
         excluded_share_cap=Decimal("0.5"),
+        source_note=(
+            "Code on Wages 2019 s.2(y) — excluded allowances above one half of "
+            "total remuneration are added back into wages. Provisions brought "
+            "into force 21 Nov 2025; Central Rules and state rules follow "
+            "separately, which is why this is scoped by statute and "
+            "jurisdiction rather than by date alone."
+        ),
     ),
 ]
 
@@ -129,6 +147,13 @@ EPF_RULES: list[EpfRule] = [
         admin_min_per_establishment=Decimal("500"),
         eps_new_member_cutoff=date(2014, 9, 1),
         eps_max_age=58,
+        source_note=(
+            "EPFO employer guidance: 12% each side on a 15,000 wage ceiling; "
+            "EPS 8.33% capped on 15,000; EDLI 0.5% and administration charges "
+            "0.5% with a 500/month per-establishment floor. EPS excluded for a "
+            "first-time member on or after 1 Sep 2014 above the ceiling, and "
+            "on attaining 58."
+        ),
     ),
 ]
 
@@ -138,6 +163,11 @@ ESI_RULES: list[EsiRule] = [
         effective_from=date(2019, 7, 1),
         employee_rate=Decimal("0.0075"),
         employer_rate=Decimal("0.0325"),
+        source_note=(
+            "ESIC notification effective 1 Jul 2019: employee 0.75%, employer "
+            "3.25%. Coverage ceiling and the Apr-Sep / Oct-Mar contribution "
+            "periods are applied in statutory.py."
+        ),
     ),
 ]
 

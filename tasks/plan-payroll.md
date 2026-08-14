@@ -393,13 +393,37 @@ jurisdiction fallback recorded, not silent · existing payslips recompute identi
 **Verify:** 27 wage-definition tests pass unchanged · `ccdemo` shadow-run byte-identical.
 **Deps:** none · **Files:** `payroll/rules.py`, `statutory.py`, `service.py` · **M**
 
-### Task 1.2: Statutory rules become effective-dated data
+### Task 1.2: Statutory rules become effective-dated data — **REVISED, mostly withdrawn**
+
+**The premise was wrong.** This justified a rules table with "a rate change is
+a migration, not a deploy". Alembic runs in CI, so **a migration IS a deploy
+here** — the distinction it rests on does not exist.
+
+`rules.py` already argued the opposite and is right: EPF and ESI rates are
+national law, not customer configuration. A table invites a customer to set an
+unlawful rate, and the genuinely per-customer parts (scheme applicability, PT
+slabs) are already in the database. Code means rules are reviewed, diffed and
+released like any other change.
+
+**Done instead:** every rule carries `source_note` citing the instrument it
+came from, so a CA can check the engine rather than trust it. Scoping by
+statute and jurisdiction landed in D-1.1, in code.
+
+**What would un-withdraw it:** a customer needing to differ *lawfully*. The
+original comment names per-establishment PT as the likely first, and that is
+already a table.
+
+<details><summary>Original task text, retained for the record</summary>
+
+#### Task 1.2 (superseded)
 `(statute, jurisdiction, effective_from, effective_to, version, params JSONB,
 source_note)`, Python values as seeded fallback.
 **AC:** rate change is a migration not a deploy · payslip stamps the version ·
 missing rule raises a named error, never a silent zero.
 **Verify:** future-dated fictional rate applies only to its period · upgrade/downgrade clean.
 **Deps:** 1.1 · **M**
+
+</details>
 
 ### Task 1.3: PayrollContext — bulk load, pure compute
 One context per run; calculation becomes pure functions over it.
