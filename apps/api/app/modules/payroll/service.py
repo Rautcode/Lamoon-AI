@@ -57,6 +57,21 @@ def month_bounds(period: date) -> tuple[date, date]:
     return first, first.replace(day=calendar.monthrange(first.year, first.month)[1])
 
 
+def _jurisdiction_of(db: Session, employee: Employee) -> str | None:
+    """The state whose rules apply to this person.
+
+    Their establishment's state code, or None for the centre. The same
+    resolution PT already uses — jurisdiction hangs off the establishment, not
+    off the company, because a company can sit in several states at once.
+    """
+    if employee.establishment_id is None:
+        return None
+    from app.modules.payroll.workforce import Establishment
+
+    est = db.get(Establishment, employee.establishment_id)
+    return est.state_code if est is not None else None
+
+
 def calendar_context(
     db: Session,
     company_id: uuid.UUID,
@@ -375,8 +390,16 @@ def compute_payslip(
     # The statutory wage is DERIVED, not nominated. From 21 Nov 2025 an
     # employer can't shrink their PF liability by moving pay into allowances:
     # excluded pay above half of remuneration is added back.
-    wage_def = rules.wage_definition_for(period)
-    basis = rules.statutory_wage(wage_lines, wage_def)
+    #
+    # Asked PER STATUTE and per jurisdiction, because the Codes were not
+    # notified all at once — state rules follow the Centre separately, so a
+    # Maharashtra establishment can sit on a different basis from a Karnataka
+    # one in the same run.
+    jurisdiction = _jurisdiction_of(db, employee)
+    basis = rules.basis_for(
+        wage_lines, statute="epf", jurisdiction=jurisdiction, period=period
+    )
+    wage_def = rules.definition_for("epf", jurisdiction=jurisdiction, period=period)
     pf_wage = basis.statutory_wage
     epf_rule = rules.epf_rule_for(period)
     esi_rule = rules.esi_rule_for(period)

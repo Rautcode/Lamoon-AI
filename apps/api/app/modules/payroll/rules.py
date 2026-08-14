@@ -47,7 +47,15 @@ LABOUR_CODE_START = date(2025, 11, 21)
 
 @dataclass(frozen=True)
 class WageDefinition:
-    """How to derive the statutory wage from a salary structure."""
+    """How to derive the statutory wage from a salary structure.
+
+    Scoped by STATUTE and JURISDICTION, because the Codes were not notified all
+    at once: only certain provisions took effect on 21 November 2025, Central
+    Rules followed, and state rules follow separately. So EPF can be on the
+    revised basis while another statute is not, and Maharashtra can differ from
+    Karnataka. A single global date cannot express that, and gets it silently
+    wrong for months at a time.
+    """
 
     version: str
     effective_from: date
@@ -55,6 +63,10 @@ class WageDefinition:
     #: this share of total remuneration is added back into wages. `None` is the
     #: pre-Labour-Code behaviour — the nominated components and nothing else.
     excluded_share_cap: Decimal | None
+    #: None = applies to every statute that has no rule of its own.
+    statute: str | None = None
+    #: None = central. A state code ("MH") overrides the centre for that state.
+    jurisdiction: str | None = None
 
 
 @dataclass(frozen=True)
@@ -143,7 +155,69 @@ def _resolve(rules: list, period: date):
 
 
 def wage_definition_for(period: date) -> WageDefinition:
-    return _resolve(WAGE_DEFINITIONS, period)
+    """The general definition. Kept for callers that genuinely have no statute
+    in hand; anything computing money should use `definition_for`."""
+    return _resolve([d for d in WAGE_DEFINITIONS if d.statute is None], period)
+
+
+#: Most specific wins: a rule naming both the statute and the state beats one
+#: naming either, which beats the general one. Specificity beats recency, so a
+#: general definition notified later cannot silently take over a statute that
+#: has its own — the same rule calendar assignment follows.
+def _specificity(d: WageDefinition) -> int:
+    return (1 if d.statute else 0) + (2 if d.jurisdiction else 0)
+
+
+def pick_definition(
+    catalogue: list[WageDefinition],
+    *,
+    statute: str,
+    jurisdiction: str | None,
+    period: date,
+) -> WageDefinition:
+    """The wage definition for one statute, in one jurisdiction, on one period.
+
+    Pure, so the decision that sets everybody's PF basis is testable without a
+    database or a clock.
+    """
+    matches = [
+        d
+        for d in catalogue
+        if d.effective_from <= period
+        and d.statute in (None, statute)
+        and d.jurisdiction in (None, jurisdiction)
+    ]
+    if not matches:
+        raise ValueError(
+            f"no wage definition in force for {statute} in "
+            f"{jurisdiction or 'the centre'} on {period.isoformat()}"
+        )
+    return max(matches, key=lambda d: (_specificity(d), d.effective_from))
+
+
+def definition_for(
+    statute: str, *, jurisdiction: str | None, period: date
+) -> WageDefinition:
+    return pick_definition(
+        WAGE_DEFINITIONS, statute=statute, jurisdiction=jurisdiction, period=period
+    )
+
+
+def basis_for(
+    lines: list[tuple[Decimal, str]],
+    *,
+    statute: str,
+    jurisdiction: str | None,
+    period: date,
+    catalogue: list[WageDefinition] | None = None,
+) -> "WageBasis":
+    """The statutory wage for one statute. THE entry point for anything
+    computing money — `statutory_wage` below is the arithmetic it uses."""
+    definition = pick_definition(
+        catalogue if catalogue is not None else WAGE_DEFINITIONS,
+        statute=statute, jurisdiction=jurisdiction, period=period,
+    )
+    return statutory_wage(lines, definition)
 
 
 def epf_rule_for(period: date) -> EpfRule:

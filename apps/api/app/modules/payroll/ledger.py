@@ -388,4 +388,7 @@ def statutory_wage_from_inputs(
         for i in inputs
         if i.kind in ("earning", "overtime")
     ]
-    return rules.statutory_wage(lines, rules.wage_definition_for(period))
+    # EPF's basis, because this is what the PF wage is built from. When a
+    # second statute needs a different one, it asks for its own rather than
+    # sharing this.
+    return rules.basis_for(lines, statute="epf", jurisdiction=None, period=period)
