@@ -239,6 +239,27 @@ def pre_joining_days(
     return Decimal(working_days - payable)
 
 
+def confirmed_absences(db: Session, employee_id: uuid.UUID, start: date, end: date) -> Decimal:
+    """Days a human looked at and confirmed as unexplained absence.
+
+    APPROVED absences only. An unapproved one is a question, not a deduction —
+    that is the whole safety property of the attendance bridge, and reading
+    unapproved facts here would undo it.
+    """
+    from app.modules.payroll.workforce import WorkFact
+
+    rows = db.scalars(
+        select(WorkFact).where(
+            WorkFact.employee_id == employee_id,
+            WorkFact.day >= start, WorkFact.day <= end,
+            WorkFact.status == "absent",
+            WorkFact.approved_at.is_not(None),
+            WorkFact.deleted_at.is_(None),
+        )
+    ).all()
+    return Decimal(len(rows))
+
+
 def derive_lop(
     db: Session, *, company_id: uuid.UUID, employee: Employee, period: date
 ) -> Decimal:
@@ -252,8 +273,14 @@ def derive_lop(
     first time anyone edited their TDS.
     """
     start, end = month_bounds(period)
-    return unpaid_leave_days(db, employee.id, start, end) + pre_joining_days(
-        db, company_id, employee, period
+    return (
+        unpaid_leave_days(db, employee.id, start, end)
+        # A confirmed absence is unpaid — that is what approving one MEANS.
+        # Unapproved ones are deliberately absent from this sum: they are a
+        # question, and reading them here would undo the bridge's whole safety
+        # property.
+        + confirmed_absences(db, employee.id, start, end)
+        + pre_joining_days(db, company_id, employee, period)
     )
 
 

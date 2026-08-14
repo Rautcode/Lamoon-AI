@@ -696,3 +696,19 @@ def run_risk(
     return ValidationOut(period=p, findings=_findings_out(findings), **{
         k: summary[k] for k in ("blocking", "warnings", "info", "impact", "groups")
     })
+
+
+@facts_router.post("/facts/derive", dependencies=CAN_WRITE_FACTS)
+def derive_facts(
+    period: date, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Build a month's work facts from attendance, leave and the calendar.
+
+    Idempotent, so the nightly sweep and a manual refresh are the same thing.
+    Refused for a finalized month: deriving facts there cannot change the pay
+    and would only create work nobody can act on.
+    """
+    from app.modules.attendance import bridge
+
+    _refuse_if_closed(db, period)
+    return bridge.derive_period(db, company_id=uuid.UUID(cid), period=_period(period))

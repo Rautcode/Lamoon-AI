@@ -139,6 +139,33 @@ def validate(db: Session, *, company_id: uuid.UUID, period: date) -> list[Findin
                 )
             )
 
+        # Days the bridge could not explain. A WARNING, never blocking: an
+        # unexplained absence must not stop payroll, it must be decided. If it
+        # blocked, HR would resolve it by clicking whatever cleared the block.
+        unexplained = db.scalars(
+            select(WorkFact).where(
+                WorkFact.employee_id == emp.id,
+                WorkFact.day >= period,
+                WorkFact.day <= month_end,
+                WorkFact.status == "absent",
+                WorkFact.approved_at.is_(None),
+                WorkFact.deleted_at.is_(None),
+            )
+        ).all()
+        if unexplained:
+            days = sorted(f.day.isoformat() for f in unexplained)
+            findings.append(
+                Finding(
+                    code="attendance_unexplained", severity=WARNING,
+                    employee_id=emp.id, employee_name=emp.full_name,
+                    message=(
+                        f"{len(days)} day{'' if len(days) == 1 else 's'} with no punch "
+                        "and no leave — regularise, record leave, or confirm as unpaid"
+                    ),
+                    detail={"days": str(len(days)), "dates": ", ".join(days[:5])},
+                )
+            )
+
     findings.extend(_minimum_wage(db, company_id=company_id, period=period))
     return findings
 
