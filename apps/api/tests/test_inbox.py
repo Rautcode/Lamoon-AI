@@ -17,7 +17,7 @@ fails:
                  bug, not a formatting one.
 """
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -97,7 +97,17 @@ def org(client):
     worker = client.post(f"{API}/hr/employees", json={
         "full_name": "Ravi Worker", "email": f"ravi@{sub}.test",
         "reporting_manager_id": boss["id"], "joined_on": "2026-01-01",
+        "date_of_birth": "1992-05-05", "pf_first_joined_on": "2013-01-01",
     }, headers=hr).json()
+
+    # A salary, so a run produces a payslip and can actually be finalized.
+    basic = client.post(f"{API}/payroll/components", json={
+        "code": "BASIC", "name": "Basic", "kind": "earning",
+        "wage_basis": "wages", "esi_wage": True, "taxable": True, "sequence": 10,
+    }, headers=hr).json()
+    client.put(f"{API}/payroll/employees/{worker['id']}/salary", json={
+        "components": [{"component_id": basic["id"], "amount": "30000"}],
+    }, headers=hr)
 
     # Give the manager a login so the inbox has somebody to belong to.
     outbox.clear()
@@ -255,3 +265,117 @@ def test_ageing_is_visible(client, org):
     mine = client.get(f"{API}/inbox", headers=org["boss_headers"]).json()
     assert mine[0]["age_days"] == 0
     assert mine[0]["first_seen_at"] is not None
+
+
+# --- the inbox must not become a graveyard ----------------------------------
+
+
+@endpoint
+def test_work_in_a_finalized_month_is_not_asked_about(client, org):
+    """Approving work for a closed month changes nothing — corrections there are
+    adjustments in a later period. Asking anyway is noise that never goes away,
+    because nothing the manager does can make it disappear."""
+    raise_fact(client, org, "2026-08-03")
+    client.post(f"{API}/inbox/sync", headers=org["hr"])
+    assert len(client.get(f"{API}/inbox", headers=org["boss_headers"]).json()) == 1
+
+    run = client.post(f"{API}/payroll/runs", json={"period": "2026-08-01"},
+                      headers=org["hr"]).json()
+    client.post(f"{API}/payroll/runs/{run['id']}/finalize", headers=org["hr"])
+    client.post(f"{API}/inbox/sync", headers=org["hr"])
+
+    assert client.get(f"{API}/inbox", headers=org["boss_headers"]).json() == []
+
+
+@endpoint
+def test_ancient_unapproved_work_is_not_asked_about(client, org):
+    """Unbounded, this query grows forever: a fact nobody approved in 2024 would
+    sit in an inbox for the life of the company."""
+    from app.modules.payroll.inbox_sync import STALE_AFTER_DAYS
+
+    old = (date.today() - timedelta(days=STALE_AFTER_DAYS + 30)).isoformat()
+    raise_fact(client, org, old)
+    client.post(f"{API}/inbox/sync", headers=org["hr"])
+
+    mine = client.get(f"{API}/inbox", headers=org["boss_headers"]).json()
+    assert all(old not in i["title"] for i in mine)
+
+
+# --- delivery: one message per person, and only for what is new -------------
+
+
+@endpoint
+def test_the_digest_is_one_mail_for_everything_outstanding(client, org):
+    """An exception open for a week must not generate seven emails. That is how
+    people learn to filter the product into a folder they never read."""
+    import asyncio
+
+    from app.core.inbox import digest
+    from app.core.notify.base import outbox
+    from tests.helpers import company_session
+
+    for day in ("2026-08-03", "2026-08-04", "2026-08-05"):
+        raise_fact(client, org, day)
+    client.post(f"{API}/inbox/sync", headers=org["hr"])
+
+    outbox.clear()
+    with company_session(client, org["sub"]) as (db, company_id):
+        asyncio.run(digest.send_digests(db, company_id=company_id))
+        db.commit()
+
+    sent = [m for m in outbox if m["template"] == "inbox_digest"]
+    assert len(sent) == 1, "three items, one manager, one email"
+    assert "3 things need your attention" in sent[0]["subject"]
+    assert sent[0]["body"].count("Approve work for") == 3
+
+
+@endpoint
+def test_the_digest_does_not_repeat_itself(client, org):
+    """Still open tomorrow is not news. Escalation raises the voice, repetition
+    just trains people to ignore it."""
+    import asyncio
+
+    from app.core.inbox import digest
+    from app.core.notify.base import outbox
+    from tests.helpers import company_session
+
+    raise_fact(client, org, "2026-08-03")
+    client.post(f"{API}/inbox/sync", headers=org["hr"])
+
+    with company_session(client, org["sub"]) as (db, company_id):
+        asyncio.run(digest.send_digests(db, company_id=company_id))
+        db.commit()
+    outbox.clear()
+    with company_session(client, org["sub"]) as (db, company_id):
+        again = asyncio.run(digest.send_digests(db, company_id=company_id))
+        db.commit()
+
+    assert again["people"] == 0
+    assert [m for m in outbox if m["template"] == "inbox_digest"] == []
+
+
+@endpoint
+def test_an_item_older_than_the_threshold_escalates_once(client, org):
+    """Ageing is what turns "somebody should" into "somebody must". Marking it
+    twice would mean escalating twice."""
+    from datetime import UTC, datetime
+
+    from app.core.inbox import service as inbox_service
+    from app.core.inbox.models import InboxItem
+    from tests.helpers import company_session
+
+    raise_fact(client, org, "2026-08-03")
+    client.post(f"{API}/inbox/sync", headers=org["hr"])
+
+    with company_session(client, org["sub"]) as (db, _cid):
+        row = db.query(InboxItem).filter(InboxItem.state == "open").first()
+        row.first_seen_at = datetime.now(UTC) - timedelta(
+            days=inbox_service.ESCALATE_AFTER_DAYS + 1
+        )
+        db.flush()
+        assert len(inbox_service.escalate_due(db)) == 1
+        assert inbox_service.escalate_due(db) == [], "escalating twice is escalating twice"
+        db.commit()
+
+    mine = client.get(f"{API}/inbox", headers=org["boss_headers"]).json()
+    assert mine[0]["escalated_at"] is not None

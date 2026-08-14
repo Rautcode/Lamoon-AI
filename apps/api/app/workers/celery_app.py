@@ -32,6 +32,16 @@ celery_app.conf.update(
             "schedule": crontab(minute=0),
             "options": {"queue": "background"},
         },
+        # Re-derive every inbox, escalate what has gone stale, then send ONE
+        # digest per person. Early morning so it lands before the working day,
+        # and daily rather than hourly because notification_at is a watermark,
+        # not a rate limit — an hourly sweep would still only mail new items,
+        # but it would escalate on a clock nobody asked for.
+        "inbox-sweep-daily": {
+            "task": "app.workers.celery_app.sweep_inboxes",
+            "schedule": crontab(hour=6, minute=30),
+            "options": {"queue": "background"},
+        },
     },
 )
 
@@ -41,6 +51,13 @@ def auto_reject_stale() -> dict[str, int]:
     from app.modules.ats.tasks import auto_reject_stale_all
 
     return asyncio.run(auto_reject_stale_all())
+
+
+@celery_app.task(name="app.workers.celery_app.sweep_inboxes")
+def sweep_inboxes() -> dict[str, int]:
+    from app.core.inbox.tasks import sweep_all
+
+    return asyncio.run(sweep_all())
 
 
 @celery_app.task(name="app.workers.celery_app.send_interview_reminders")

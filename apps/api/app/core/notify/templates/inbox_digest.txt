@@ -1,0 +1,12 @@
+Subject: {count} thing{plural} need your attention
+Hello {name},
+
+{count} thing{plural} in Lamoon {verb} waiting on you:
+
+{lines}
+
+Open Lamoon to resolve them:
+{link}
+
+You are receiving this because these items are assigned to you. This is one
+message for everything outstanding, not one per item.

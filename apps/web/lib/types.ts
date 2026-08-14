@@ -509,3 +509,24 @@ export type WorkFact = {
   approved_at: string | null;
   approved_by: string | null;
 };
+
+/** One durable claim that YOU must act. Not a notification — a notification is
+ *  a message that already happened; this is a thing that is still true, and it
+ *  disappears when the underlying problem is fixed by any route. */
+export type InboxItem = {
+  id: string;
+  kind: string;
+  title: string;
+  detail: string | null;
+  severity: "blocking" | "review" | "info";
+  entity: string | null;
+  entity_id: string | null;
+  href: string | null;
+  due_on: string | null;
+  state: "open" | "resolved" | "dismissed";
+  seen_count: number;
+  age_days: number;
+  first_seen_at: string;
+  resolved_at: string | null;
+  escalated_at: string | null;
+};

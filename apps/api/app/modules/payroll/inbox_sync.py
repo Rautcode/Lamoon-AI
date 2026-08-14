@@ -12,16 +12,21 @@ money. A manager approving overtime learns nothing about anybody's pay, which
 is the same boundary `workfact.approve` draws in the permission model.
 """
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.inbox import service as inbox
 from app.modules.hr_core.models import Employee
+from app.modules.payroll.models import PayrollRun
 from app.modules.payroll.workforce import WorkFact
 
 KIND = "workfact.pending"
+
+#: A hard horizon on top of the finalized-period filter. Work nobody signed
+#: off in half a year is a data-cleanup conversation, not a manager's inbox.
+STALE_AFTER_DAYS = 180
 
 
 def _manager_user_ids(db: Session, employee_ids: set[uuid.UUID]) -> dict[uuid.UUID, uuid.UUID]:
@@ -66,12 +71,35 @@ def sync_pending_work_facts(db: Session, *, company_id: uuid.UUID) -> inbox.Sync
     disappear from this query, and the next sync closes the item. That is why
     a manager who fixes something in the attendance screen never has to come
     back and tidy their inbox.
+
+    **Bounded to periods that can still be paid.** Approving work for a month
+    whose payroll is already finalized changes nothing — corrections there are
+    adjustments in a later period — so asking a manager to do it is noise that
+    never goes away. Unbounded, this query also grows forever: a work fact
+    nobody approved in 2024 would sit in somebody's inbox for the life of the
+    company. `validation.py` bounds the identical query to its period; this had
+    no bound at all.
     """
-    facts = db.scalars(
-        select(WorkFact).where(
-            WorkFact.approved_at.is_(None), WorkFact.deleted_at.is_(None)
-        )
-    ).all()
+    finalized = {
+        run.period
+        for run in db.scalars(
+            select(PayrollRun).where(
+                PayrollRun.status == "finalized", PayrollRun.deleted_at.is_(None)
+            )
+        ).all()
+    }
+    facts = [
+        f
+        for f in db.scalars(
+            select(WorkFact).where(
+                WorkFact.approved_at.is_(None),
+                WorkFact.deleted_at.is_(None),
+                # Nothing older than the horizon, whatever the run history says.
+                WorkFact.day >= date.today() - timedelta(days=STALE_AFTER_DAYS),
+            )
+        ).all()
+        if f.day.replace(day=1) not in finalized
+    ]
 
     managers = _manager_user_ids(db, {f.employee_id for f in facts})
     names: dict[uuid.UUID, str] = (

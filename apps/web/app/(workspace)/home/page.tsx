@@ -41,6 +41,10 @@ export default function HomePage() {
     queryKey: ["employees"],
     queryFn: () => api.employees.list(),
   });
+  /* Items assigned to ME. Distinct from the derived signals below: a signal is
+     something the app noticed, an inbox item is something somebody decided is
+     mine to close — so it goes first and it can be dismissed. */
+  const { data: inbox } = useQuery({ queryKey: ["inbox"], queryFn: () => api.inbox.list() });
 
   const firstName =
     me?.full_name?.split(" ")[0] ??
@@ -156,13 +160,49 @@ export default function HomePage() {
 
         {loading && <p className="t-meta">Checking…</p>}
 
-        {!loading && signals.length === 0 && (
+        {!loading && signals.length === 0 && (inbox ?? []).length === 0 && (
           <p className="t-body text-[var(--ink-3)]">
             Nothing needs a decision right now.
           </p>
         )}
 
         <div className="-mx-3">
+          {(inbox ?? []).map((item) => (
+            <Link
+              key={item.id}
+              href={item.href ?? "/home"}
+              className="group flex items-center gap-4 rounded-[12px] px-3 py-3.5
+                         transition-colors hover:bg-[var(--surface-1)]"
+            >
+              {/* Severity is a rail plus a word, never colour alone. */}
+              <span
+                className={`w-0.5 shrink-0 self-stretch rounded-full ${
+                  item.severity === "blocking"
+                    ? "bg-[var(--critical)]"
+                    : item.severity === "review"
+                      ? "bg-[var(--caution)]"
+                      : "bg-[var(--ink-4)]"
+                }`}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="text-[0.9375rem] text-[var(--ink-1)]">{item.title}</span>
+                {item.detail && (
+                  <span className="t-meta block">{item.detail}</span>
+                )}
+              </span>
+              <span className="t-meta shrink-0">
+                {item.severity === "blocking" ? "Blocking" : "Review"}
+                {item.age_days > 0 && ` · ${item.age_days}d`}
+                {item.escalated_at && " · escalated"}
+              </span>
+              <ArrowRight
+                size={16}
+                className="shrink-0 text-[var(--ink-4)] opacity-0 transition-all
+                           duration-200 group-hover:translate-x-0.5 group-hover:opacity-100"
+              />
+            </Link>
+          ))}
+
           {signals.map((s) => (
             <Link
               key={s.label}

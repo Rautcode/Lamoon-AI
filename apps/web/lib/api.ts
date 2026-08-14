@@ -31,6 +31,7 @@ import type {
   WorkFact,
   PTSlab,
   CompensationVersion,
+  InboxItem,
   SalaryStructure,
   Presence,
   WorkWeek,
@@ -330,6 +331,18 @@ export const api = {
       }),
     employeePayslips: (employeeId: string) =>
       request<Payslip[]>(`/payroll/employees/${employeeId}/payslips`),
+  },
+  inbox: {
+    /** Takes no user id by design — the server derives the person from the
+     *  JWT, the same rule ESS follows. An inbox you can address by somebody
+     *  else's id is not an inbox. */
+    list: (state: "open" | "resolved" | "dismissed" = "open") =>
+      request<InboxItem[]>(`/inbox?state=${state}`),
+    dismiss: (id: string, reason?: string) =>
+      request<InboxItem>(`/inbox/${id}/dismiss`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      }),
   },
   compensation: {
     versions: (employeeId: string) =>
