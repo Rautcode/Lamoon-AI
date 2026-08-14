@@ -99,6 +99,12 @@ class PayrollSettingsIn(BaseModel):
     esi_wage_ceiling: Decimal = Field(default=Decimal("21000"), ge=0, max_digits=12,
                                       decimal_places=2)
     pf_on_full_wage: bool = False
+    #: Overtime and premium-day rules. Configuration rather than statute —
+    #: these vary by scheduled employment, so a factory on a different overtime
+    #: agreement is a settings change and not a deploy.
+    overtime_multiplier: Decimal = Decimal("2.0")
+    premium_day_multiplier: Decimal = Decimal("2.0")
+    standard_day_hours: Decimal = Decimal("8.0")
 
 
 class PayrollSettingsOut(PayrollSettingsIn):

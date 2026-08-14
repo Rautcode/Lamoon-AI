@@ -116,6 +116,22 @@ class PayrollSettings(TenantBase):
     #: ceiling. Both are lawful; only the employer knows which they committed to.
     pf_on_full_wage: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    #: Overtime and premium-day multipliers, and the standard day that turns a
+    #: monthly wage into an hourly rate. Unlike PF rates these vary by
+    #: SCHEDULED EMPLOYMENT rather than by statute, so they are per company
+    #: rather than per jurisdiction. Defaults are the Code on Wages position.
+    #: ponytail: not effective-dated — that is D-1.2, which absorbs every
+    #: statutory parameter at once rather than growing a second mechanism here.
+    overtime_multiplier: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2), default=Decimal("2.0")
+    )
+    premium_day_multiplier: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2), default=Decimal("2.0")
+    )
+    standard_day_hours: Mapped[Decimal] = mapped_column(
+        Numeric(4, 2), default=Decimal("8.0")
+    )
+
 
 class ProfessionalTaxSlab(TenantBase):
     """Professional tax is levied by STATE, and the slabs differ in every one

@@ -29,16 +29,13 @@ from app.modules.work_calendar import service as work_calendar
 
 ZERO = Decimal("0")
 
-#: Overtime and premium-day multipliers. Statutory overtime is twice ordinary
-#: wages under the Code on Wages; premium (holiday / weekly-off) work is
-#: treated the same here. ponytail: not yet effective-dated or per-state,
-#: because unlike PF rates these vary by scheduled employment — lift them into
-#: `rules.py` the moment a customer needs a different multiplier.
+#: Fallbacks only. The live values come from payroll settings — these exist so
+#: a caller without a settings row (a pure unit test) still computes something
+#: rather than dividing by None. Statutory overtime is twice ordinary wages
+#: under the Code on Wages; premium (holiday / weekly-off) work is treated the
+#: same.
 OVERTIME_MULTIPLIER = Decimal("2.0")
 PREMIUM_DAY_MULTIPLIER = Decimal("2.0")
-
-#: Standard hours in a working day, used to convert a monthly wage into an
-#: hourly rate for overtime. Configurable per establishment later.
 STANDARD_DAY_HOURS = Decimal("8")
 
 
@@ -192,7 +189,9 @@ def seed_from_structure(
     return created
 
 
-def hourly_rate(monthly_wage: Decimal, working_days: int) -> Decimal:
+def hourly_rate(
+    monthly_wage: Decimal, working_days: int, *, day_hours: Decimal | None = None
+) -> Decimal:
     """A monthly wage expressed per hour, for overtime.
 
     Uses the period's own working days rather than a fixed 26 or 30, so the
@@ -201,7 +200,8 @@ def hourly_rate(monthly_wage: Decimal, working_days: int) -> Decimal:
     """
     if working_days <= 0:
         return ZERO
-    return monthly_wage / (Decimal(working_days) * STANDARD_DAY_HOURS)
+    hours = day_hours or STANDARD_DAY_HOURS
+    return monthly_wage / (Decimal(working_days) * hours)
 
 
 def seed_from_work_facts(
@@ -236,7 +236,19 @@ def seed_from_work_facts(
         i for i in inputs_for(db, employee.id, period) if i.wage_basis == "wages"
     ]
     ordinary_wage = sum((i.amount for i in wage_inputs), start=ZERO)
-    rate = hourly_rate(ordinary_wage, working_days)
+
+    # Multipliers are configuration, not constants — they vary by scheduled
+    # employment rather than by statute, so a factory on a different overtime
+    # agreement is a settings change and not a deploy.
+    from app.modules.payroll import service as payroll_settings
+
+    settings = payroll_settings.get_settings(db, company_id)
+    day_hours = Decimal(settings.standard_day_hours or STANDARD_DAY_HOURS)
+    ot_multiplier = Decimal(settings.overtime_multiplier or OVERTIME_MULTIPLIER)
+    premium_multiplier = Decimal(
+        settings.premium_day_multiplier or PREMIUM_DAY_MULTIPLIER
+    )
+    rate = hourly_rate(ordinary_wage, working_days, day_hours=day_hours)
 
     created: list[PayrollInput] = []
     if ot_hours > ZERO and rate > ZERO:
@@ -244,8 +256,8 @@ def seed_from_work_facts(
             PayrollInput(
                 company_id=company_id, employee_id=employee.id, period=period,
                 kind="overtime", code="OT", name="Overtime",
-                quantity=ot_hours, rate=statutory.money(rate * OVERTIME_MULTIPLIER),
-                amount=statutory.money(ot_hours * rate * OVERTIME_MULTIPLIER),
+                quantity=ot_hours, rate=statutory.money(rate * ot_multiplier),
+                amount=statutory.money(ot_hours * rate * ot_multiplier),
                 # Overtime counts toward remuneration for the 50% test but is
                 # not itself "wages" — the Code is explicit on this.
                 wage_basis="excluded",
@@ -254,15 +266,15 @@ def seed_from_work_facts(
             )
         )
     if premium_days and rate > ZERO:
-        daily = rate * STANDARD_DAY_HOURS
+        daily = rate * day_hours
         created.append(
             PayrollInput(
                 company_id=company_id, employee_id=employee.id, period=period,
                 kind="overtime", code="PREMIUM", name="Holiday / weekly-off work",
                 quantity=Decimal(premium_days),
-                rate=statutory.money(daily * PREMIUM_DAY_MULTIPLIER),
+                rate=statutory.money(daily * premium_multiplier),
                 amount=statutory.money(
-                    Decimal(premium_days) * daily * PREMIUM_DAY_MULTIPLIER
+                    Decimal(premium_days) * daily * premium_multiplier
                 ),
                 wage_basis="excluded",
                 source="work_facts", sequence=410,
