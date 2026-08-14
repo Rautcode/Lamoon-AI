@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core import context
 from app.core.artifacts.routes import router as artifacts_router
 from app.core.config import get_settings
+from app.core.inbox.routes import router as inbox_router
 from app.modules.assistant.routes import router as assistant_router
 from app.modules.ats.routes import router as ats_router
 from app.modules.attendance.routes import router as attendance_router
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(payroll_router, prefix="/api/v1")
     app.include_router(compensation_router, prefix="/api/v1")
     app.include_router(artifacts_router, prefix="/api/v1")
+    app.include_router(inbox_router, prefix="/api/v1")
     app.include_router(ledger_router, prefix="/api/v1")
     app.include_router(facts_router, prefix="/api/v1")
     app.include_router(contractor_router, prefix="/api/v1")
