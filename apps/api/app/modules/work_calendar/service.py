@@ -166,28 +166,61 @@ def default_calendar(db: Session, company_id: uuid.UUID) -> WorkCalendar:
             )
         )
         db.flush()
+        invalidate(db)  # the memo was built before this assignment existed
     return cal
 
 
+def _cache(db: Session) -> dict:
+    """Per-session memo for calendar lookups.
+
+    Resolution is called several times per employee per payroll run — from the
+    ledger, from unpaid-leave days, from joiner proration and from
+    compute_payslip — and a company's calendars do not change while a run is
+    computing. Without this, moving from one company-wide calendar to
+    per-employee resolution turned three extra queries per call into a **10×
+    slowdown of the payroll suite**, measured: `test_payroll.py` went from
+    ~25s to 262s.
+
+    `Session.info` is SQLAlchemy's own place for exactly this, so the memo
+    lives and dies with the session — a new request never sees a stale one.
+    Writers call `invalidate()`.
+    """
+    return db.info.setdefault("_work_calendar_memo", {})
+
+
+def invalidate(db: Session) -> None:
+    """Drop the memo. Called after any calendar, holiday or assignment write,
+    so a create-then-resolve inside one request sees its own change."""
+    db.info.pop("_work_calendar_memo", None)
+
+
 def _assignments(db: Session) -> list[Assignment]:
-    rows = db.scalars(
-        select(CalendarAssignment).where(CalendarAssignment.deleted_at.is_(None))
-    ).all()
-    return [
-        Assignment(
-            calendar_id=r.calendar_id, scope_type=r.scope_type, scope_id=r.scope_id,
-            effective_from=r.effective_from, effective_to=r.effective_to,
-        )
-        for r in rows
-    ]
+    memo = _cache(db)
+    if "assignments" not in memo:
+        rows = db.scalars(
+            select(CalendarAssignment).where(CalendarAssignment.deleted_at.is_(None))
+        ).all()
+        memo["assignments"] = [
+            Assignment(
+                calendar_id=r.calendar_id, scope_type=r.scope_type, scope_id=r.scope_id,
+                effective_from=r.effective_from, effective_to=r.effective_to,
+            )
+            for r in rows
+        ]
+    return list(memo["assignments"])
 
 
 def _load(
     db: Session, calendar_ids: set[uuid.UUID], start: date, end: date
 ) -> dict[uuid.UUID, tuple[WorkCalendar, dict[date, str]]]:
-    """Calendars and their holidays for a range, in two queries."""
+    """Calendars and their holidays for a range, in two queries — and memoised,
+    because payroll asks for the same period repeatedly."""
     if not calendar_ids:
         return {}
+    memo = _cache(db)
+    key = ("load", frozenset(calendar_ids), start, end)
+    if key in memo:
+        return dict(memo[key])
     cals = db.scalars(
         select(WorkCalendar).where(
             WorkCalendar.id.in_(calendar_ids), WorkCalendar.deleted_at.is_(None)
@@ -203,7 +236,9 @@ def _load(
     by_cal: dict[uuid.UUID, dict[date, str]] = {c.id: {} for c in cals}
     for h in rows:
         by_cal.setdefault(h.calendar_id, {})[h.day] = h.name
-    return {c.id: (c, by_cal.get(c.id, {})) for c in cals}
+    loaded = {c.id: (c, by_cal.get(c.id, {})) for c in cals}
+    memo[key] = loaded
+    return dict(loaded)
 
 
 def resolve_for(

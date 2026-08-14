@@ -385,3 +385,45 @@ def test_day_state_still_classifies_from_the_resolved_calendar(client, org):
 
     assert mine["holiday"] == "Site holiday" and mine["working_day"] is False
     assert theirs["holiday"] is None, "the other site does not observe it"
+
+
+@endpoint
+def test_an_assignment_can_be_removed(client, org):
+    """An assignment made in error must be removable, or a wrong calendar is
+    permanent."""
+    cal = client.post(f"{API}/calendar/calendars", json={
+        "name": "Wrong", "working_days": "1111110",
+    }, headers=org["hr"]).json()
+    asg = client.post(f"{API}/calendar/assignments", json={
+        "calendar_id": cal["id"], "scope_type": "establishment",
+        "scope_id": org["mumbai"]["id"], "effective_from": "2026-01-01",
+    }, headers=org["hr"]).json()
+
+    mira = org["people"]["Mira Mumbai"]["id"]
+    before = client.get(f"{API}/calendar/resolve?employee_id={mira}&on=2026-08-15",
+                        headers=org["hr"]).json()
+    assert before["calendar_name"] == "Wrong"
+
+    assert client.delete(f"{API}/calendar/assignments/{asg['id']}",
+                         headers=org["hr"]).status_code == 204
+
+    after = client.get(f"{API}/calendar/resolve?employee_id={mira}&on=2026-08-15",
+                       headers=org["hr"]).json()
+    assert after["source"] == "company", "removing the override falls back, not off a cliff"
+
+
+@endpoint
+def test_the_last_company_assignment_cannot_be_removed(client, org):
+    """A company that resolves nothing is paid for zero working days."""
+    mira = org["people"]["Mira Mumbai"]["id"]
+    client.get(f"{API}/calendar/resolve?employee_id={mira}&on=2026-08-15",
+               headers=org["hr"])  # forces the default into existence
+
+    company = [
+        a for a in client.get(f"{API}/calendar/assignments", headers=org["hr"]).json()
+        if a["scope_type"] == "company"
+    ]
+    assert len(company) == 1
+    r = client.delete(f"{API}/calendar/assignments/{company[0]['id']}", headers=org["hr"])
+    assert r.status_code == 409
+    assert "no working days at all" in r.json()["detail"]

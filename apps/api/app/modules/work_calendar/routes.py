@@ -6,10 +6,10 @@ employee needs and nothing about it is sensitive. Writing needs
 how every future leave request is billed.
 """
 import uuid
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -49,6 +49,7 @@ def set_work_week(
     cal = service.default_calendar(db, company_id)
     cal.working_days = body.working_days
     db.flush()
+    service.invalidate(db)
     audit.record(
         db, company_id=company_id, entity="work_calendar", entity_id=cal.id,
         action="work_week_changed", payload={"working_days": body.working_days},
@@ -96,6 +97,7 @@ def add_holiday(
         # confusing to look at.
         existing.name = body.name
         db.flush()
+        service.invalidate(db)
         return existing
 
     holiday = Holiday(
@@ -117,9 +119,8 @@ def remove_holiday(
     holiday = db.get(Holiday, holiday_id)
     if holiday is None or holiday.deleted_at is not None:
         raise HTTPException(404, "not found")
-    from datetime import UTC, datetime
-
     holiday.deleted_at = datetime.now(UTC)  # soft delete, per the row convention
+    service.invalidate(db)
     audit.record(
         db, company_id=uuid.UUID(cid), entity="holiday", entity_id=holiday.id, action="removed",
     )
@@ -151,6 +152,7 @@ def create_calendar(
     cal = WorkCalendar(company_id=company_id, **body.model_dump())
     db.add(cal)
     db.flush()
+    service.invalidate(db)
     audit.record(
         db, company_id=company_id, entity="work_calendar", entity_id=cal.id,
         action="created", payload={"name": cal.name, "working_days": cal.working_days},
@@ -215,6 +217,7 @@ def add_calendar_holiday(
     )
     db.add(holiday)
     db.flush()
+    service.invalidate(db)
     audit.record(
         db, company_id=company_id, entity="holiday", entity_id=holiday.id,
         action="added",
@@ -260,6 +263,7 @@ def create_assignment(
     row = CalendarAssignment(company_id=company_id, **body.model_dump())
     db.add(row)
     db.flush()
+    service.invalidate(db)
     audit.record(
         db, company_id=company_id, entity="calendar_assignment", entity_id=row.id,
         action="created",
@@ -300,4 +304,47 @@ def resolve(
         is_working_day=resolved.is_working_day(on),
         is_holiday=resolved.is_holiday(on),
         holiday_name=resolved.holidays.get(on),
+    )
+
+
+@router.delete("/assignments/{assignment_id}", status_code=204, dependencies=CAN_WRITE)
+def delete_assignment(
+    assignment_id: uuid.UUID, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Remove an assignment made in error.
+
+    Soft delete, per the row convention — the assignment is what a past
+    period's working days were resolved from, so the row is worth keeping even
+    once it no longer applies.
+
+    Removing the last COMPANY-scope assignment is refused: a company that
+    resolves nothing is paid for zero working days, and `default_calendar`
+    would silently re-create one anyway, which is worse than a clear refusal.
+    """
+    row = db.get(CalendarAssignment, assignment_id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(404, "assignment not found")
+
+    if row.scope_type == "company":
+        others = db.scalar(
+            select(func.count())
+            .select_from(CalendarAssignment)
+            .where(
+                CalendarAssignment.scope_type == "company",
+                CalendarAssignment.id != row.id,
+                CalendarAssignment.deleted_at.is_(None),
+            )
+        )
+        if not others:
+            raise HTTPException(
+                409,
+                "this is the only company-wide calendar assignment — removing it "
+                "would leave every employee with no working days at all",
+            )
+
+    row.deleted_at = datetime.now(UTC)
+    service.invalidate(db)
+    audit.record(
+        db, company_id=uuid.UUID(cid), entity="calendar_assignment",
+        entity_id=row.id, action="removed",
     )
