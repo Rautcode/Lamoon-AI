@@ -3,12 +3,14 @@ endpoint and the approve-time validation, so both can never disagree.
 """
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.modules.audit import service as audit
 from app.modules.hr_core.models import Employee
+from app.modules.leave import entitlement, policy
 from app.modules.leave.models import LeaveRequest, LeaveType
 from app.modules.leave.schemas import LeaveBalanceOut
 from app.modules.work_calendar import service as work_calendar
@@ -31,19 +33,73 @@ def used_days(db: Session, employee_id: uuid.UUID, leave_type_id: uuid.UUID, yea
     return int(total or 0)
 
 
+def entitled_days(
+    db: Session, employee: Employee, leave_type: LeaveType, year: int,
+    *, as_of: date | None = None,
+) -> Decimal:
+    """What this employee is owed for this type this year.
+
+    Resolves the policy that applies to THEM — establishment, department or
+    worker type — and prorates by their joining and exit dates. Falls back to
+    the leave type's own `annual_quota` when nobody has written a policy, which
+    is the difference between "no policy" and "no leave".
+    """
+    candidates = [
+        policy.Candidate(
+            scope_type=p.scope_type, scope_id=p.scope_id, scope_value=p.scope_value,
+            annual_days=str(p.annual_days), accrual_method=p.accrual_method,
+            prorate_on_joining=p.prorate_on_joining, prorate_on_exit=p.prorate_on_exit,
+            effective_from=p.effective_from, effective_to=p.effective_to,
+        )
+        for p in db.scalars(
+            select(policy.LeavePolicy).where(
+                policy.LeavePolicy.leave_type_id == leave_type.id,
+                policy.LeavePolicy.deleted_at.is_(None),
+            )
+        ).all()
+    ]
+    applicable = policy.pick_policy(
+        candidates,
+        establishment_id=employee.establishment_id,
+        department_id=employee.department_id,
+        worker_type=employee.worker_type,
+        on=as_of or date(year, 12, 31),
+    )
+    if applicable is None:
+        return Decimal(leave_type.annual_quota)
+
+    exited_on = employee.exited_on if hasattr(employee, "exited_on") else None
+    return entitlement.entitlement(
+        annual_days=Decimal(applicable.annual_days),
+        method=applicable.accrual_method,
+        year=year,
+        joined_on=employee.joined_on if applicable.prorate_on_joining else None,
+        exited_on=exited_on if applicable.prorate_on_exit else None,
+        as_of=as_of,
+    )
+
+
 def balances_for(db: Session, employee_id: uuid.UUID) -> list[LeaveBalanceOut]:
     year = datetime.now(UTC).year
+    employee = db.get(Employee, employee_id)
     types = db.scalars(select(LeaveType).where(LeaveType.deleted_at.is_(None))).all()
     out = []
     for lt in types:
         used = used_days(db, employee_id, lt.id, year)
+        allocated = (
+            entitled_days(db, employee, lt, year, as_of=date.today())
+            if employee is not None
+            else Decimal(lt.annual_quota)
+        )
         out.append(
             LeaveBalanceOut(
                 leave_type_id=lt.id,
                 leave_type_name=lt.name,
-                allocated=lt.annual_quota,
+                # Whole days over the wire until half-day leave lands (C4b);
+                # the engine already carries Decimal so nothing rounds twice.
+                allocated=int(allocated),
                 used=used,
-                remaining=lt.annual_quota - used,
+                remaining=int(allocated) - used,
             )
         )
     return out
