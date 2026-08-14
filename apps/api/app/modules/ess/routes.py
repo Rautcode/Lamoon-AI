@@ -112,6 +112,7 @@ def file_my_leave(
             start_date=body.start_date,
             end_date=body.end_date,
             reason=body.reason,
+            half_day=body.half_day,
             source="ess",
         )
     except (leave_service.InvalidDateRange, leave_service.NoWorkingDays) as e:

@@ -43,6 +43,11 @@ class Employee(TenantBase):
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|probation|exited
     joined_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #: Last working day. `status = "exited"` records THAT somebody left and
+    #: never when, which leaves leave proration, F&F and the movement bridge
+    #: unable to compute anything. Nullable because a leaver recorded before
+    #: this column existed has no date to invent.
+    exited_on: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     # --- statutory identity ------------------------------------------------
     # Payroll needs these to decide APPLICABILITY, not just amounts. Without

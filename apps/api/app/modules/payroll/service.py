@@ -122,7 +122,9 @@ def pt_slabs(
     return [(s.up_to, s.amount) for s in db.scalars(stmt).all()]
 
 
-def unpaid_leave_days(db: Session, employee_id: uuid.UUID, start: date, end: date) -> int:
+def unpaid_leave_days(
+    db: Session, employee_id: uuid.UUID, start: date, end: date
+) -> Decimal:
     """Approved leave in the month, on leave types marked unpaid.
 
     Counted by overlap with the month rather than by the request's own `days`,
@@ -142,7 +144,7 @@ def unpaid_leave_days(db: Session, employee_id: uuid.UUID, start: date, end: dat
         )
     ).all()
     if not requests:
-        return 0
+        return ZERO
 
     # The employee's OWN calendar, not the company's: a day that is a holiday
     # at their site is not an unpaid day for them.
@@ -153,10 +155,23 @@ def unpaid_leave_days(db: Session, employee_id: uuid.UUID, start: date, end: dat
         db, company_id=requests[0].company_id, establishment_id=establishment_id,
         start=start, end=end,
     )
-    return sum(
-        resolved.working_days_between(max(r.start_date, start), min(r.end_date, end))
-        for r in requests
-    )
+    # A request's own `days` is what it was BILLED — including halves — but a
+    # request straddling a month boundary must only cost this month its own
+    # share. So bill the overlap in working days, then scale by the fraction
+    # the request itself represents: a half-day request over one day is 0.5,
+    # not 1, and payroll must deduct exactly that.
+    total = ZERO
+    for r in requests:
+        overlap = resolved.working_days_between(
+            max(r.start_date, start), min(r.end_date, end)
+        )
+        whole = resolved.working_days_between(r.start_date, r.end_date)
+        if whole <= 0:
+            continue
+        total += (Decimal(r.days) * Decimal(overlap) / Decimal(whole)).quantize(
+            Decimal("0.1")
+        )
+    return total
 
 
 def esi_locked_in(db: Session, employee_id: uuid.UUID, period: date) -> bool:
@@ -204,25 +219,29 @@ def finalized_payslips_for(db: Session, employee_id: uuid.UUID) -> list[Payslip]
     )
 
 
-def pre_joining_days(db: Session, company_id: uuid.UUID, employee: Employee, period: date) -> int:
+def pre_joining_days(
+    db: Session, company_id: uuid.UUID, employee: Employee, period: date
+) -> Decimal:
     """Working days in the month before this person joined — days they simply
     aren't owed. Derived from `joined_on` every time, never stored on its own."""
     if not employee.joined_on:
-        return 0
+        return ZERO
     start, end = month_bounds(period)
     if employee.joined_on <= start:
-        return 0
+        return ZERO
 
     pattern, holidays, working_days = calendar_context(
         db, company_id, period, establishment_id=employee.establishment_id
     )
     if employee.joined_on > end:
-        return working_days  # not on the payroll for any of this month
+        return Decimal(working_days)  # not on the payroll for any of this month
     payable = work_calendar.count_working_days(employee.joined_on, end, pattern, holidays)
-    return working_days - payable
+    return Decimal(working_days - payable)
 
 
-def derive_lop(db: Session, *, company_id: uuid.UUID, employee: Employee, period: date) -> int:
+def derive_lop(
+    db: Session, *, company_id: uuid.UUID, employee: Employee, period: date
+) -> Decimal:
     """The system's view of total unpaid days: approved unpaid leave plus any
     days before joining.
 
@@ -240,7 +259,7 @@ def derive_lop(db: Session, *, company_id: uuid.UUID, employee: Employee, period
 
 def lop_for(
     db: Session, *, company_id: uuid.UUID, employee: Employee, period: date, prior: Payslip | None
-) -> int:
+) -> Decimal:
     """Unpaid days for a (re)computation, honouring a human's correction.
 
     An overridden figure is the TOTAL, taken as final — the person typing it is
@@ -248,7 +267,7 @@ def lop_for(
     it. Otherwise the system derives it fresh, so a recompute is idempotent.
     """
     if prior is not None and prior.lop_overridden:
-        return prior.lop_days
+        return Decimal(prior.lop_days)
     return derive_lop(db, company_id=company_id, employee=employee, period=period)
 
 
@@ -258,7 +277,7 @@ def compute_payslip(
     company_id: uuid.UUID,
     employee: Employee,
     period: date,
-    lop_days: int,
+    lop_days: Decimal,
     tds: Decimal,
 ) -> dict:
     """The whole calculation for one person, as a plain dict.
@@ -275,8 +294,10 @@ def compute_payslip(
     _, _, working_days = calendar_context(
         db, company_id, period, establishment_id=employee.establishment_id
     )
-    lop_days = max(0, min(lop_days, working_days))
-    paid_days = working_days - lop_days
+    # Clamped in Decimal: a half-day must survive the clamp, and comparing a
+    # Decimal against an int working-day count is exact either way.
+    lop_days = max(ZERO, min(Decimal(lop_days), Decimal(working_days)))
+    paid_days = Decimal(working_days) - lop_days
     # A zero-working-day month (every day a declared holiday) would otherwise
     # divide by zero. Treat it as fully paid rather than paying nobody.
     ratio = Decimal(paid_days) / Decimal(working_days) if working_days else Decimal("1")

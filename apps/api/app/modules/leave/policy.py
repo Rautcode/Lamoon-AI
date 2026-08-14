@@ -20,7 +20,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import Date, ForeignKey, Index, Numeric, String
+from sqlalchemy import Date, ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,6 +61,26 @@ class LeavePolicy(TenantBase):
     prorate_on_joining: Mapped[bool] = mapped_column(default=True)
     prorate_on_exit: Mapped[bool] = mapped_column(default=True)
 
+    #: Probation is a real policy lever: many companies accrue nothing until
+    #: somebody is confirmed. Default True, because turning it off must be a
+    #: decision rather than something a migration did to people.
+    accrue_during_probation: Mapped[bool] = mapped_column(default=True)
+
+    #: Days that survive into next year, and how long they last there. NULL max
+    #: means "no carry-forward", which is different from a max of 0 only in
+    #: intent — both carry nothing — so NULL is the honest default.
+    carry_forward_max: Mapped[float | None] = mapped_column(Numeric(5, 1), nullable=True)
+    carry_forward_expires_months: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+
+    #: Whether somebody may go into the red. Off by default: an approval that
+    #: silently creates a negative balance is a deduction nobody agreed to.
+    allow_negative_balance: Mapped[bool] = mapped_column(default=False)
+    #: Whether an unused balance is paid out. Read by F&F (Phase 6); recorded
+    #: here now so the policy is complete rather than half-expressible.
+    encashable: Mapped[bool] = mapped_column(default=False)
+
     effective_from: Mapped[date] = mapped_column(Date)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
 
@@ -73,6 +93,10 @@ class Applicable:
     accrual_method: str
     prorate_on_joining: bool
     prorate_on_exit: bool
+    accrue_during_probation: bool
+    carry_forward_max: str | None
+    allow_negative_balance: bool
+    encashable: bool
     source: str
 
 
@@ -89,6 +113,12 @@ class Candidate:
     prorate_on_exit: bool
     effective_from: date
     effective_to: date | None
+    # Defaults last, so a caller constructing one positionally still gets the
+    # required fields checked.
+    accrue_during_probation: bool = True
+    carry_forward_max: str | None = None
+    allow_negative_balance: bool = False
+    encashable: bool = False
 
     def covers(self, on: date) -> bool:
         return self.effective_from <= on and (
@@ -136,5 +166,9 @@ def pick_policy(
         accrual_method=best.accrual_method,
         prorate_on_joining=best.prorate_on_joining,
         prorate_on_exit=best.prorate_on_exit,
+        accrue_during_probation=best.accrue_during_probation,
+        carry_forward_max=best.carry_forward_max,
+        allow_negative_balance=best.allow_negative_balance,
+        encashable=best.encashable,
         source=best.scope_type,
     )

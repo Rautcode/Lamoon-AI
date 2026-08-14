@@ -15,3 +15,5 @@ class MyLeaveRequestIn(BaseModel):
     start_date: date
     end_date: date
     reason: str | None = None
+    #: Same rule as the HR path: only meaningful on a single-day request.
+    half_day: bool = False

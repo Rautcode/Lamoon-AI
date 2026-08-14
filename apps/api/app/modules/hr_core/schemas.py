@@ -54,6 +54,9 @@ class DepartmentOut(BaseModel):
 
 
 class EmployeeIn(BaseModel):
+    #: Last working day. Leave proration and F&F need the date,
+    #: not just `status = "exited"`.
+    exited_on: date | None = None
     full_name: str
     email: str | None = None
     department_id: uuid.UUID | None = None
@@ -91,6 +94,7 @@ class EmployeeUpdate(BaseModel):
 
     full_name: str | None = None
     email: str | None = None
+    exited_on: date | None = None
     department_id: uuid.UUID | None = None
     reporting_manager_id: uuid.UUID | None = None
     status: str | None = None

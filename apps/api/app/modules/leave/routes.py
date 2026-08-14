@@ -14,10 +14,15 @@ from app.core.db import get_db
 from app.core.rbac import current_user, require
 from app.core.tenant import resolve_tenant
 from app.modules.audit import service as audit
+from app.modules.leave import entitlement
+from app.modules.leave import policy as leave_policy
 from app.modules.leave import service as leave_service
 from app.modules.leave.models import LeaveRequest, LeaveType
+from app.modules.leave.policy import LeavePolicy
 from app.modules.leave.schemas import (
     LeaveBalanceOut,
+    LeavePolicyIn,
+    LeavePolicyOut,
     LeaveRequestIn,
     LeaveRequestOut,
     LeaveTypeIn,
@@ -65,6 +70,7 @@ def create_leave_request(
             start_date=body.start_date,
             end_date=body.end_date,
             reason=body.reason,
+            half_day=body.half_day,
             source="hr",
         )
     except (leave_service.InvalidDateRange, leave_service.NoWorkingDays) as e:
@@ -138,3 +144,86 @@ def reject_leave_request(
 ):
     req = _get_pending(request_id, db)
     return _decide(req, "rejected", db, cid, principal.user_id)
+
+
+# --- policies ----------------------------------------------------------------
+#
+# `LeaveType.annual_quota` said "same for every employee in V1". A policy is
+# how that stops being true: scoped, effective-dated, and resolved per person.
+
+
+@router.get("/policies", response_model=list[LeavePolicyOut], dependencies=CAN_READ)
+def list_policies(
+    leave_type_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+    _cid: str = Depends(resolve_tenant),
+):
+    stmt = select(LeavePolicy).where(LeavePolicy.deleted_at.is_(None))
+    if leave_type_id:
+        stmt = stmt.where(LeavePolicy.leave_type_id == leave_type_id)
+    return db.scalars(stmt.order_by(LeavePolicy.effective_from)).all()
+
+
+@router.post("/policies", response_model=LeavePolicyOut, dependencies=CAN_WRITE)
+def create_policy(
+    body: LeavePolicyIn, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Write a policy for one leave type and one scope.
+
+    Refuses a scope it cannot resolve rather than accepting it and silently
+    never matching — a policy that applies to nobody looks configured and does
+    nothing, which is the worst of both.
+    """
+    company_id = uuid.UUID(cid)
+    leave_type = db.get(LeaveType, body.leave_type_id)
+    if leave_type is None or leave_type.deleted_at is not None:
+        raise HTTPException(404, "leave type not found")
+    if leave_type.comp_off:
+        raise HTTPException(
+            422,
+            "compensatory off is earned by working a day off, not granted by a "
+            "policy — set comp_off on the leave type instead",
+        )
+    if body.scope_type not in leave_policy.SCOPE_PRECEDENCE:
+        raise HTTPException(422, f"unknown scope: {body.scope_type}")
+    if body.scope_type == "grade":
+        raise HTTPException(
+            422, "grade-scoped policies are modelled but not yet assignable — "
+                 "employees have no grade until that column exists",
+        )
+    if body.scope_type in ("establishment", "department") and body.scope_id is None:
+        raise HTTPException(422, f"a {body.scope_type} policy needs a scope_id")
+    if body.scope_type == "worker_type" and not body.scope_value:
+        raise HTTPException(422, "a worker_type policy needs a scope_value")
+    if body.accrual_method not in entitlement.ACCRUAL_METHODS:
+        raise HTTPException(422, f"unknown accrual method: {body.accrual_method}")
+
+    row = LeavePolicy(company_id=company_id, **body.model_dump())
+    db.add(row)
+    db.flush()
+    audit.record(
+        db, company_id=company_id, entity="leave_policy", entity_id=row.id,
+        action="created",
+        payload={
+            "leave_type_id": str(body.leave_type_id), "scope_type": body.scope_type,
+            "annual_days": str(body.annual_days),
+            "effective_from": body.effective_from.isoformat(),
+        },
+    )
+    return row
+
+
+@router.delete("/policies/{policy_id}", status_code=204, dependencies=CAN_WRITE)
+def delete_policy(
+    policy_id: uuid.UUID, db: Session = Depends(get_db), cid: str = Depends(resolve_tenant)
+):
+    """Soft delete — the policy is what a past year's entitlement was computed
+    from, so the row stays worth keeping once it no longer applies."""
+    row = db.get(LeavePolicy, policy_id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(404, "policy not found")
+    row.deleted_at = datetime.now(UTC)
+    audit.record(
+        db, company_id=uuid.UUID(cid), entity="leave_policy",
+        entity_id=row.id, action="removed",
+    )

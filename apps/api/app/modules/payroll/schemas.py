@@ -129,8 +129,12 @@ class PayslipOut(BaseModel):
     employee_name: str
     period: date
     working_days: int
-    paid_days: int
-    lop_days: int
+    #: Days cross the wire as NUMBERS while money crosses as strings. Money
+    #: needs the string because rupees-and-paise cannot round-trip a float;
+    #: days are exact at half-day granularity, so a number is both safe and
+    #: what every existing caller already expects.
+    paid_days: float
+    lop_days: float
     lop_overridden: bool
     gross: Decimal
     deductions: Decimal
@@ -151,7 +155,7 @@ class PayslipAdjustIn(BaseModel):
     days unpaid for a reason no leave request records (an exit mid-month, an
     unpaid sabbatical)."""
 
-    lop_days: int | None = Field(default=None, ge=0)
+    lop_days: Decimal | None = Field(default=None, ge=0)
     tds: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     #: Where the TDS figure came from. Recorded alongside the amount so the
     #: deduction can be explained months later.

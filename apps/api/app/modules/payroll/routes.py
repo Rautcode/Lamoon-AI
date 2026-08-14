@@ -508,7 +508,7 @@ def adjust_payslip(
 
     audit.record(
         db, company_id=company_id, entity="payslip", entity_id=slip.id, action="adjusted",
-        payload={"lop_days": slip.lop_days, "tds": str(slip.tds)},
+        payload={"lop_days": str(slip.lop_days), "tds": str(slip.tds)},
     )
     return slip
 

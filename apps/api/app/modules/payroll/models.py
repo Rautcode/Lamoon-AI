@@ -181,8 +181,11 @@ class Payslip(TenantBase):
     employee_name: Mapped[str] = mapped_column(String(200))
 
     working_days: Mapped[int] = mapped_column(Integer)
-    paid_days: Mapped[int] = mapped_column(Integer)
-    lop_days: Mapped[int] = mapped_column(Integer, default=0)
+    #: Fractional, because half-day leave exists. `working_days` above stays
+    #: whole: it counts days in a calendar, and half a working day is not a
+    #: thing a calendar can contain.
+    paid_days: Mapped[Decimal] = mapped_column(Numeric(5, 1))
+    lop_days: Mapped[Decimal] = mapped_column(Numeric(5, 1), default=0)
     #: True once HR has typed an LOP figure by hand. Recomputing a draft must
     #: not silently discard it — an exit, an unpaid sabbatical, or a correction
     #: is knowledge the system doesn't have.
